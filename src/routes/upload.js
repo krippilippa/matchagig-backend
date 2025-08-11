@@ -1,6 +1,4 @@
 import OpenAI, { toFile } from 'openai';
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
-import mammoth from 'mammoth';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -33,32 +31,22 @@ export default async function uploadRoute(app) {
         purpose: 'assistants'
       });
 
-      // Extract raw text locally for MVP, then send to OpenAI for cleaning
-      let rawText = '';
-      if (mimetype === 'application/pdf' || filename?.toLowerCase().endsWith('.pdf')) {
-        const res = await pdfParse(buf);
-        rawText = (res.text || '').trim();
-      } else if (
-        mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-        filename?.toLowerCase().endsWith('.docx')
-      ) {
-        const res = await mammoth.extractRawText({ buffer: buf });
-        rawText = (res.value || '').trim();
-      } else if (mimetype === 'text/plain' || filename?.toLowerCase().endsWith('.txt')) {
-        rawText = buf.toString('utf8').trim();
-      } else {
-        return reply.code(415).send(err('UNSUPPORTED_MEDIA_TYPE', 'Only PDF, DOCX, or TXT supported'));
-      }
-
-      const prompt = 'You are a parser. Output only valid JSON with this shape: ' +
+      const prompt = 'You are a parser. Read the attached résumé file. Output only valid JSON with this shape: ' +
         '{ "text": "<single block of clean plain text>", "sections": [{ "heading": "...", "body": "..." }] }. ' +
         'Normalize headings, fix hyphenation/line breaks, merge multi-column text logically, keep bullets as lines starting with "- ". ' +
-        'If you cannot build sections reliably, still return the JSON with an empty sections array. No commentary.\n\n' +
-        'RAW:\n' + rawText;
+        'If you cannot build sections reliably, still return the JSON with an empty sections array. No commentary.';
 
       const resp = await openai.responses.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        input: prompt
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: prompt },
+              { type: 'input_file', file_id: uploaded.id }
+            ]
+          }
+        ]
       });
 
       const outputText = resp.output_text || '';
