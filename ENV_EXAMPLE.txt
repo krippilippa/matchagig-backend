@@ -1,0 +1,7 @@
+Copy to .env and fill values:
+
+OPENAI_API_KEY=
+# Optional override (defaults to gpt-4o-mini)
+# OPENAI_MODEL=
+# Optional server port (defaults to 8787)
+# PORT=
