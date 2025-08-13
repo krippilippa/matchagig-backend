@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import uploadRoute from './routes/upload.js';
+import queryRoute from './routes/query.js';
 
 const PORT = process.env.PORT || 8787;
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
@@ -21,6 +22,7 @@ await app.register(multipart, {
 
 app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 await app.register(uploadRoute);
+await app.register(queryRoute);
 
 app.post('/v1/extract', async (req, reply) => {
   // Accept EITHER multipart file OR raw JSON with {text}
