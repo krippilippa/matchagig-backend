@@ -32,10 +32,13 @@ export default async function uploadRoute(app) {
       });
 
       const prompt = [
-        'You are a résumé extractor. Read the attached file and OUTPUT ONLY a single plain-text résumé (no JSON, no markdown, no commentary).',
-        'Normalize headings and bullets, fix broken hyphenation/line breaks, merge multi-column layouts into correct reading order.',
-        'Include, in a clear readable order: Name, Contact, Summary/Profile, Skills, Experience (company, role, dates, concise bullet points), Education, Certifications/Other.',
-        'If a field is missing in the source, simply omit it. Do not invent content. Use "- " for bullet points. Keep it concise and clean.'
+        'You are a text extractor. Read the attached résumé and OUTPUT ONLY the extracted plain text of the document.',
+        'Verbatim policy: do NOT summarize, paraphrase, rephrase, shorten, expand, or invent anything.',
+        'Preserve the original wording, punctuation, capitalization, numbers, names, and dates exactly as written.',
+        'Allowed cleanup: (1) fix layout artifacts like broken hyphenation at line breaks, (2) merge multi-column/segmented layouts into logical reading order,',
+        '(3) remove repeated headers/footers/page numbers, (4) collapse excessive whitespace but keep paragraph and list structure.',
+        'Do NOT normalize headings or bullets; keep the original characters and labels as in the source.',
+        'Include ALL content that appears in the document. Output plain text only—no JSON, no markdown, no commentary.'
       ].join(' ');
 
       const resp = await openai.responses.create({
