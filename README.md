@@ -100,6 +100,39 @@ curl -X POST http://localhost:8787/v1/query \
 
 ---
 
+### POST /v1/summary
+Generate a concise résumé summary with fixed formatting rules.
+
+- Content-Type: `application/json`
+- Body: provide either `fileId` or `text` (not both); optional `jobTitle`
+```json
+{ "fileId": "file_abc123", "jobTitle": "Senior Frontend Engineer" }
+```
+or
+```json
+{ "text": "...resume plain text...", "jobTitle": "Senior Frontend Engineer" }
+```
+- Response 200:
+```json
+{ "text": "- **Experience:** ...\n- **Skills:** ...\n- **Projects:** ...\n- **Education:** ...\n- **Certifications:** ...\n\n**Concerns & Requirements:** ...\n\n**Fit signal:** react, graphql, leadership" }
+```
+- Response 400:
+```json
+{ "error": { "code": "BAD_REQUEST", "message": "Provide either fileId OR text, not both", "details": {} } }
+```
+
+- cURL examples:
+```bash
+curl -X POST http://localhost:8787/v1/summary \
+  -H 'Content-Type: application/json' \
+  -d '{"fileId":"file_abc123","jobTitle":"Senior Frontend Engineer"}'
+
+curl -X POST http://localhost:8787/v1/summary \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"...resume text...","jobTitle":"Senior Frontend Engineer"}'
+```
+
+
 ## Integration Notes
 - CORS is open in dev. You can call from the browser directly during prototyping.
 - Expect Responses API calls to take a few seconds for large files.
