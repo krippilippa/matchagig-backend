@@ -31,10 +31,12 @@ export default async function uploadRoute(app) {
         purpose: 'assistants'
       });
 
-      const prompt = 'You are a parser. Read the attached résumé file. Output only valid JSON with this shape: ' +
-        '{ "text": "<single block of clean plain text>", "sections": [{ "heading": "...", "body": "..." }] }. ' +
-        'Normalize headings, fix hyphenation/line breaks, merge multi-column text logically, keep bullets as lines starting with "- ". ' +
-        'If you cannot build sections reliably, still return the JSON with an empty sections array. No commentary.';
+      const prompt = [
+        'You are a résumé extractor. Read the attached file and OUTPUT ONLY a single plain-text résumé (no JSON, no markdown, no commentary).',
+        'Normalize headings and bullets, fix broken hyphenation/line breaks, merge multi-column layouts into correct reading order.',
+        'Include, in a clear readable order: Name, Contact, Summary/Profile, Skills, Experience (company, role, dates, concise bullet points), Education, Certifications/Other.',
+        'If a field is missing in the source, simply omit it. Do not invent content. Use "- " for bullet points. Keep it concise and clean.'
+      ].join(' ');
 
       const resp = await openai.responses.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -49,11 +51,8 @@ export default async function uploadRoute(app) {
         ]
       });
 
-      const outputText = resp.output_text || '';
-      let parsed;
-      try { parsed = JSON.parse(outputText); } catch (_) { parsed = { text: outputText, sections: [] }; }
-
-      return reply.send({ fileId: uploaded.id, text: parsed.text || '', sections: Array.isArray(parsed.sections) ? parsed.sections : [] });
+      const outputText = (resp.output_text || '').trim();
+      return reply.send({ fileId: uploaded.id, text: outputText });
     } catch (e) {
       req.log.error(e);
       return reply.code(500).send(err('OPENAI_ERROR', 'Failed to process file with OpenAI', { hint: e.message }));
