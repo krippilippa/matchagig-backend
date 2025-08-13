@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import uploadRoute from './routes/upload.js';
 import queryRoute from './routes/query.js';
 import summaryRoute from './routes/summary.js';
+import redflagsRoute from './routes/redflags.js';
 
 const PORT = process.env.PORT || 8787;
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
@@ -23,6 +24,7 @@ app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 await app.register(uploadRoute);
 await app.register(queryRoute);
 await app.register(summaryRoute);
+await app.register(redflagsRoute);
 
 
 function err(code, message, details = {}) {
