@@ -41,7 +41,7 @@ Quick health check.
 ---
 
 ### POST /v1/upload
-Upload a résumé (PDF/DOCX/TXT). The server uploads the file to OpenAI Files and asks the Responses API to return a faithful plain-text extraction (no rewriting/summarizing). No local parsing.
+Upload a résumé (PDF/DOCX/TXT). The server uploads the file to OpenAI Files and asks the Responses API to return structured JSON with key fields and faithful full text. No local parsing.
 
 - Content-Type: `multipart/form-data`
 - Form fields:
@@ -49,7 +49,13 @@ Upload a résumé (PDF/DOCX/TXT). The server uploads the file to OpenAI Files an
 
 - Response 200:
 ```json
-{ "fileId": "file_abc123", "text": "...verbatim plain-text extraction of the document..." }
+{
+  "fileId": "file_abc123",
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "blurb": "Full-stack engineer with 7+ years building SaaS and APIs in Node and React.",
+  "text": "...verbatim plain-text extraction of the document..."
+}
 ```
 - Response 400:
 ```json

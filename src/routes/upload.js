@@ -32,13 +32,17 @@ export default async function uploadRoute(app) {
       });
 
       const prompt = [
-        'You are a text extractor. Read the attached résumé and OUTPUT ONLY the extracted plain text of the document.',
-        'Verbatim policy: do NOT summarize, paraphrase, rephrase, shorten, expand, or invent anything.',
-        'Preserve the original wording, punctuation, capitalization, numbers, names, and dates exactly as written.',
-        'Allowed cleanup: (1) fix layout artifacts like broken hyphenation at line breaks, (2) merge multi-column/segmented layouts into logical reading order,',
-        '(3) remove repeated headers/footers/page numbers, (4) collapse excessive whitespace but keep paragraph and list structure.',
-        'Do NOT normalize headings or bullets; keep the original characters and labels as in the source.',
-        'Include ALL content that appears in the document. Output plain text only—no JSON, no markdown, no commentary.'
+        'You are a résumé parser. Read the attached file and OUTPUT ONLY valid JSON with this exact schema:',
+        '{ "name": string|null, "email": string|null, "blurb": string, "text": string }.',
+        'Rules for fields:',
+        '- name: best candidate full name if confidently found, else null. Do not invent.',
+        '- email: primary email if present, else null. Do not invent.',
+        '- blurb: a neutral 1–2 sentence objective summary of the candidate (no hype).',
+        '- text: faithful plain-text extraction of the document content. Do NOT summarize or paraphrase.',
+        'text extraction policy:',
+        '- Preserve original wording, punctuation, capitalization, numbers, names, dates.',
+        '- Allowed cleanup only: fix line-break hyphenation; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.',
+        'Output JSON only. No markdown. No extra keys. No comments.'
       ].join(' ');
 
       const resp = await openai.responses.create({
@@ -55,7 +59,17 @@ export default async function uploadRoute(app) {
       });
 
       const outputText = (resp.output_text || '').trim();
-      return reply.send({ fileId: uploaded.id, text: outputText });
+      let parsed;
+      try {
+        parsed = JSON.parse(outputText);
+      } catch {
+        parsed = { name: null, email: null, blurb: '', text: outputText };
+      }
+      const name = typeof parsed.name === 'string' || parsed.name === null ? parsed.name : null;
+      const email = typeof parsed.email === 'string' || parsed.email === null ? parsed.email : null;
+      const blurb = typeof parsed.blurb === 'string' ? parsed.blurb : '';
+      const text = typeof parsed.text === 'string' ? parsed.text : '';
+      return reply.send({ fileId: uploaded.id, name, email, blurb, text });
     } catch (e) {
       req.log.error(e);
       return reply.code(500).send(err('OPENAI_ERROR', 'Failed to process file with OpenAI', { hint: e.message }));
