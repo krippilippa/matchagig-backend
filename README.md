@@ -148,7 +148,7 @@ curl -X POST http://localhost:8787/v1/summary \
 ---
 
 ### POST /v1/redflags
-Scan a résumé for objective red flags. Returns either a short bulleted list (max 5) or the exact string "✅ No major red flags".
+Scan a résumé for objective red flags. Returns JSON with up to 5 items; empty list means no major red flags.
 
 - Content-Type: `application/json`
 - Body: provide either `fileId` or `text` (not both)
@@ -161,11 +161,14 @@ or
 ```
 - Response 200 (examples):
 ```json
-{ "text": "- Gap in employment: Jan 2020–Oct 2020 (9 months).\n- Tenure < 12 months at XYZ (8 months)." }
+{ "items": [
+  { "title": "Employment gap", "description": "9-month gap between Jan 2020 and Oct 2020." },
+  { "title": "Overclaiming skills", "description": "Lists 35+ disparate tools with no matching roles or timelines." }
+] }
 ```
-or
+No flags:
 ```json
-{ "text": "✅ No major red flags" }
+{ "items": [] }
 ```
 - Response 400:
 ```json

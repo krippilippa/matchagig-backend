@@ -21,17 +21,15 @@ export default async function redflagsRoute(app) {
 
       const prompt = [
         'You are MatchAGig Red-Flag Scanner, an AI assistant for résumé screening.',
-        'Identify objective red flags only. Primary categories:',
-        '- Gaps in employment longer than 6 months.',
-        '- Job tenures of less than 12 months.',
-        "- Missing educational degree (e.g., bachelor's, associate's, etc.).",
-        '- Résumés with formatting so poor that key details are unreadable or unclear.',
-        'Also include other major objective red flags such as overlapping dates, unrealistic progressions or titles, significant inconsistencies between roles and qualifications, excessive job hopping.',
-        'For each red flag, provide a short, clear 1-sentence explanation. Limit to 5 items maximum.',
-        'If no red flags are found, respond exactly with: “✅ No major red flags”.',
-        'Output format policy:',
-        '- If flags exist, output 1 line per flag, each starting with "- ".',
-        '- No other text before or after. No headings. No extra commentary. Strictly neutral tone.'
+        'Return ONLY valid JSON with this exact schema: { "items": [{ "title": string, "description": string }] }.',
+        'Rules:',
+        '- Consider primary categories: >6 month employment gaps; <12 month tenures; missing degree; unreadable formatting.',
+        '- ALSO consider other objective red flags: overlapping/contradictory dates; unrealistic rapid progressions/titles; implausible or impossible skill claims; overstuffed skill lists suggesting implausible breadth; inconsistencies between roles and qualifications; potential scam indicators.',
+        '- Each item: title is 1–3 words (e.g., "Employment gap", "Short tenure", "Overclaiming skills").',
+        '- Description: one short sentence with specifics (dates/employers/facts) in neutral tone.',
+        '- Max 5 items. Neutral, factual. No advice or praise.',
+        '- If no red flags: return { "items": [] }.',
+        'Output JSON only. No markdown. No extra keys.'
       ].join(' ');
 
       const content = [{ type: 'input_text', text: prompt }];
@@ -47,7 +45,23 @@ export default async function redflagsRoute(app) {
       });
 
       const text = (resp.output_text || '').trim();
-      return reply.send({ text });
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = { items: [] };
+      }
+      if (!parsed || !Array.isArray(parsed.items)) parsed = { items: [] };
+      const items = parsed.items
+        .filter((it) => it && typeof it === 'object')
+        .slice(0, 5)
+        .map((it) => ({
+          title: typeof it.title === 'string' ? it.title.trim() : '',
+          description: typeof it.description === 'string' ? it.description.trim() : ''
+        }))
+        .filter((it) => it.title && it.description);
+
+      return reply.send({ items });
     } catch (e) {
       req.log.error(e);
       return reply.code(500).send(err('OPENAI_ERROR', 'Red flag scan failed', { hint: e.message }));
