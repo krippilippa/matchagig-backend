@@ -12,7 +12,6 @@ export default async function summaryRoute(app) {
       const body = await req.body;
       const fileId = (body?.fileId || '').toString();
       const resumeText = (body?.text || '').toString();
-      const jobTitle = (body?.jobTitle || '').toString();
 
       const hasFile = !!fileId;
       const hasText = !!resumeText.trim();
@@ -20,35 +19,22 @@ export default async function summaryRoute(app) {
         return reply.code(400).send(err('BAD_REQUEST', 'Provide either fileId OR text, not both'));
       }
 
-      const promptHeader = (
-        'You are a Resume Summary AI assistant designed to help recruiters and hiring decision-makers quickly understand a candidate’s profile.\n\n' +
-        'Your task:\n' +
-        'Given a résumé (text or PDF) and optionally a target job title, produce output in exactly the following structure — no extra text, no headings beyond what is specified.\n\n' +
-        '### Summary bullets (Always required)\n' +
-        '- Output exactly 5 bullets.\n' +
-        '- Each bullet must be 12–16 words maximum.\n' +
-        '- Each bullet must begin with a **bold theme word** followed by a colon (e.g., **Experience:**, **Skills:**, **Certifications:**, **Projects:**, **Education:**).\n' +
-        '- Summarize factual experience, skills, and qualifications from the résumé.\n' +
-        '- Use concrete facts, metrics, and outcomes when available.\n' +
-        '- If a job title is provided, emphasize relevance to that role.\n' +
-        '- Maintain strict neutrality — no praise, no negative tone, no subjective language.\n\n' +
-        '### Concerns & Requirements (Conditional)\n' +
-        '- Include this section only if a job title is provided.\n' +
-        '- Title it exactly: **Concerns & Requirements:**\n' +
-        '- List bullet points for potential concerns or missing hard requirements. If none, write exactly: `No concerns identified.`\n\n' +
-        '### Fit Signal (Always required)\n' +
-        '- On a single final line, write: **Fit signal:** <3–6 keywords from résumé aligned to the role or general profile> (do not bold the keywords, only the label).\n\n' +
-        'Strict formatting rules:\n' +
-        '1. Output order: Summary bullets (5) → Concerns & Requirements (only if job title provided) → Fit signal line.\n' +
-        '2. No introductions, no conclusions, no explanations.\n' +
-        '3. All bullets must use the standard hyphen `-` followed by a space.\n' +
-        '4. Never exceed 16 words per bullet.'
-      );
-
-      const userContext = jobTitle ? `\n\nTarget job title: ${jobTitle}` : '';
+      const prompt = [
+        'You are an objective résumé data extractor. Return ONLY valid JSON describing the candidate. Schema:',
+        '{ "jobsCount": number, "yearsExperience": number|null, "companies": string[], "roles": string[],',
+        '  "education": [{ "degree": string|null, "field": string|null, "institution": string|null, "year": string|null }],',
+        '  "hardSkills": string[], "softSkills": string[] }.',
+        'Guidelines:',
+        '- Be strictly factual. Do NOT invent. If unknown, use null (for fields) or [] (for arrays).',
+        '- Derive jobsCount from distinct employment entries. Estimate yearsExperience if feasible; else null.',
+        '- companies: list unique organization names. roles: list unique job titles.',
+        '- education: extract degree/field/institution/year when present; otherwise nulls.',
+        '- hardSkills: concrete tools/technologies/languages/frameworks. softSkills: interpersonal/communication/leadership/etc.',
+        'Output JSON only. No markdown. No extra keys.'
+      ].join(' ');
 
       const content = [
-        { type: 'input_text', text: promptHeader + userContext }
+        { type: 'input_text', text: prompt }
       ];
 
       if (hasFile) {
@@ -63,7 +49,30 @@ export default async function summaryRoute(app) {
       });
 
       const text = (resp.output_text || '').trim();
-      return reply.send({ text });
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = { jobsCount: 0, yearsExperience: null, companies: [], roles: [], education: [], hardSkills: [], softSkills: [] };
+      }
+      const safe = {
+        jobsCount: Number.isFinite(parsed.jobsCount) ? parsed.jobsCount : 0,
+        yearsExperience: typeof parsed.yearsExperience === 'number' && parsed.yearsExperience >= 0 ? parsed.yearsExperience : null,
+        companies: Array.isArray(parsed.companies) ? parsed.companies.filter((s) => typeof s === 'string' && s.trim()).slice(0, 50) : [],
+        roles: Array.isArray(parsed.roles) ? parsed.roles.filter((s) => typeof s === 'string' && s.trim()).slice(0, 50) : [],
+        education: Array.isArray(parsed.education)
+          ? parsed.education.slice(0, 20).map((e) => ({
+              degree: e && typeof e.degree === 'string' ? e.degree : null,
+              field: e && typeof e.field === 'string' ? e.field : null,
+              institution: e && typeof e.institution === 'string' ? e.institution : null,
+              year: e && typeof e.year === 'string' ? e.year : null
+            }))
+          : [],
+        hardSkills: Array.isArray(parsed.hardSkills) ? parsed.hardSkills.filter((s) => typeof s === 'string' && s.trim()).slice(0, 100) : [],
+        softSkills: Array.isArray(parsed.softSkills) ? parsed.softSkills.filter((s) => typeof s === 'string' && s.trim()).slice(0, 100) : []
+      };
+
+      return reply.send(safe);
     } catch (e) {
       req.log.error(e);
       return reply.code(500).send(err('OPENAI_ERROR', 'Summary generation failed', { hint: e.message }));

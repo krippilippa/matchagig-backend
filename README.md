@@ -107,20 +107,30 @@ curl -X POST http://localhost:8787/v1/query \
 ---
 
 ### POST /v1/summary
-Generate a concise résumé summary with fixed formatting rules.
+Extract objective résumé data in structured JSON.
 
 - Content-Type: `application/json`
-- Body: provide either `fileId` or `text` (not both); optional `jobTitle`
+- Body: provide either `fileId` or `text` (not both)
 ```json
-{ "fileId": "file_abc123", "jobTitle": "Senior Frontend Engineer" }
+{ "fileId": "file_abc123" }
 ```
 or
 ```json
-{ "text": "...resume plain text...", "jobTitle": "Senior Frontend Engineer" }
+{ "text": "...resume plain text..." }
 ```
 - Response 200:
 ```json
-{ "text": "- **Experience:** ...\n- **Skills:** ...\n- **Projects:** ...\n- **Education:** ...\n- **Certifications:** ...\n\n**Concerns & Requirements:** ...\n\n**Fit signal:** react, graphql, leadership" }
+{
+  "jobsCount": 5,
+  "yearsExperience": 8,
+  "companies": ["Acme Inc", "Globex"],
+  "roles": ["Senior Software Engineer", "Team Lead"],
+  "education": [
+    { "degree": "B.Sc.", "field": "Computer Science", "institution": "University X", "year": "2016" }
+  ],
+  "hardSkills": ["JavaScript", "React", "Node.js", "PostgreSQL"],
+  "softSkills": ["Leadership", "Collaboration", "Communication"]
+}
 ```
 - Response 400:
 ```json
@@ -131,11 +141,11 @@ or
 ```bash
 curl -X POST http://localhost:8787/v1/summary \
   -H 'Content-Type: application/json' \
-  -d '{"fileId":"file_abc123","jobTitle":"Senior Frontend Engineer"}'
+  -d '{"fileId":"file_abc123"}'
 
 curl -X POST http://localhost:8787/v1/summary \
   -H 'Content-Type: application/json' \
-  -d '{"text":"...resume text...","jobTitle":"Senior Frontend Engineer"}'
+  -d '{"text":"...resume text..."}'
 ```
 
 
