@@ -139,7 +139,7 @@ export default async function uploadRoute(app) {
         'Do NOT summarize or paraphrase.',
       ].join('\n');
 
-      async function callExtractor(openai, fileId, attempt, allowJsonMode = true) {
+      async function callExtractor(openai, fileId, attempt) {
         const messages = [
           { role: 'system', content: BASE_SYSTEM },
           {
@@ -159,7 +159,6 @@ export default async function uploadRoute(app) {
         }
 
         const req = { model: process.env.OPENAI_MODEL || 'gpt-5-nano', input: messages };
-        if (allowJsonMode) req.response_format = { type: 'json_object' }; // try JSON mode
 
         try {
           console.log(`🤖 Calling OpenAI with model: ${req.model}`);
@@ -177,39 +176,19 @@ export default async function uploadRoute(app) {
           const parsed = JSON.parse(jsonText);
           return { ok: true, data: parsed };
         } catch (e) {
-          // If JSON mode is unsupported, signal caller to retry without JSON mode
           const msg = String(e?.message || e);
-          if (/Unsupported parameter/i.test(msg) && /response_format/i.test(msg) && allowJsonMode) {
-            console.log('↩️  Fallback: response_format not supported, caller will retry without JSON mode');
-            return { ok: false, err: 'response_format_not_supported' };
-          }
           return { ok: false, err: msg };
         }
       }
 
       let parsed;
       let errMsg = '';
-      // First attempt with JSON mode
-      const first = await callExtractor(openai, uploaded.id, 0, true);
-      if (first.ok) {
-        try { parsed = ResumeSchema.parse(first.data); } catch (zerr) {
-          errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr);
-        }
-      } else {
-        errMsg = first.err;
-      }
-
-      // Only retry if JSON mode is unsupported
-      if (!parsed && errMsg === 'response_format_not_supported') {
-        console.log('🔁 Retrying without JSON mode...');
-        const second = await callExtractor(openai, uploaded.id, 1, false);
-        if (second.ok) {
-          try { parsed = ResumeSchema.parse(second.data); } catch (zerr) {
-            errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr);
-          }
-        } else {
-          errMsg = second.err;
-        }
+      // Up to 2 attempts, same settings (no JSON mode), second adds a retry nudge
+      for (let attempt = 0; attempt <= 1 && !parsed; attempt++) {
+        const res = await callExtractor(openai, uploaded.id, attempt);
+        if (!res.ok) { errMsg = res.err; continue; }
+        try { parsed = ResumeSchema.parse(res.data); }
+        catch (zerr) { errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr); }
       }
       if (!parsed) {
         throw new Error(`Failed to parse JSON after 2 attempts: ${errMsg}`);
@@ -218,13 +197,7 @@ export default async function uploadRoute(app) {
       // Store canonical resume data (AI-extracted text)
       let normalizedText = normalizeCanonicalText(parsed.text);
       
-      // Idempotency check: running normalization twice should yield same result
-      const doubleNormalized = normalizeCanonicalText(normalizedText);
-      if (normalizedText !== doubleNormalized) {
-        console.warn('Warning: Normalization not idempotent, using double-normalized result');
-        // Use the double-normalized version for true canonical text
-        normalizedText = doubleNormalized;
-      }
+      // Single-pass normalization for performance
 
       const resumeData = {
         resumeId,
