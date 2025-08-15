@@ -102,11 +102,8 @@ export default async function uploadRoute(app) {
 
     try {
       console.log('📁 Processing multipart request...');
-      const parts = req.parts();
-      let filePart = null;
-      for await (const part of parts) {
-        if (part.type === 'file' && !filePart) filePart = part; else await part?.toBuffer?.().catch(() => {});
-      }
+      // Read a single file part in a blocking-safe way
+      const filePart = await req.file();
       if (!filePart) return reply.code(400).send(err('BAD_REQUEST', 'No file provided'));
       console.log('📄 File part found:', filePart.filename);
 
