@@ -1,23 +1,9 @@
 import OpenAI, { toFile } from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
+import { resumeStorage, storeResume } from '../shared/storage.js';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
-
-// In-memory storage for canonical resumes (replace with DB in production)
-let resumeStorage = new Map();
-
-// Export storage getter for other routes
-export function getResumeStorage() {
-  return resumeStorage;
-}
-
-// Export storage setter for server to inject shared storage
-export function setResumeStorage(storage) {
-  console.log('🔧 Upload route: Setting resume storage, current size:', storage.size);
-  resumeStorage = storage;
-  console.log('✅ Upload route: Resume storage set, new size:', resumeStorage.size);
-}
 
 // JSON schema validation
 const ResumeSchema = z.object({
@@ -206,10 +192,7 @@ Output JSON only. No markdown. No extra keys. No comments.`;
       };
       
       console.log('🔧 Storing resume data for ID:', resumeId);
-      console.log('🔧 Current storage size before:', resumeStorage.size);
-      resumeStorage.set(resumeId, resumeData);
-      console.log('✅ Resume stored successfully. New storage size:', resumeStorage.size);
-      console.log('🔧 Stored keys:', Array.from(resumeStorage.keys()));
+      storeResume(resumeId, resumeData);
 
       // Return response
       return reply.send({

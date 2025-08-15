@@ -1,14 +1,5 @@
 import OpenAI from 'openai';
-
-// Import the resume storage (in production, this would be a database)
-let resumeStorage;
-
-// This function will be called by the main server to share the storage
-export function setResumeStorage(storage) {
-  console.log('🔧 Overview route: Setting resume storage, current size:', storage.size);
-  resumeStorage = storage;
-  console.log('✅ Overview route: Resume storage set, new size:', resumeStorage.size);
-}
+import { resumeStorage, getResume, getStorageSize, getAllResumeIds } from '../shared/storage.js';
 
 // Shared system message for all prompts
 const SYSTEM_MESSAGE = `You extract facts from a résumé. Output ONLY valid JSON matching the provided schema. Unknown → null. Use exact wording from the text. Do not summarize, infer, or add keys.`;
@@ -228,10 +219,10 @@ export default async function overviewRoute(app) {
       }
 
       // Fetch canonical text from storage
-      const resumeData = resumeStorage?.get(resumeId);
+      const resumeData = getResume(resumeId);
       console.log('🔧 Overview route: Looking for resumeId:', resumeId);
-      console.log('🔧 Overview route: Current storage size:', resumeStorage?.size || 0);
-      console.log('🔧 Overview route: Stored keys:', Array.from(resumeStorage?.keys() || []));
+      console.log('🔧 Overview route: Current storage size:', getStorageSize());
+      console.log('🔧 Overview route: Stored keys:', getAllResumeIds());
       console.log('🔧 Overview route: Found resume data:', !!resumeData);
       
       if (!resumeData) {
