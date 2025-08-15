@@ -40,6 +40,9 @@ function normalizeCanonicalText(raw, pageBreaks = []) {
   const hyphenJoins = (t.match(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu) || []).length;
   t = t.replace(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu, '$1$2');
 
+  // 3b) Inline hyphen spacing fix: "Cyber- Security" -> "Cyber-Security"
+  t = t.replace(/(?<=\p{L})-\s+(?=\p{L})/gu, '-');
+
   // 4) Bullet normalization (Unicode-aware)
   const bulletStart = /^[\s]*[•‣∙◦–—·*●○-][\s]+/gm;
   const bulletsNormalized = (t.match(bulletStart) || []).length;
@@ -52,10 +55,9 @@ function normalizeCanonicalText(raw, pageBreaks = []) {
   t = t.replace(/^\d+\/\d+$/gm, '');
   t = t.replace(/^-\s*\d+\s*-$/gm, '');
 
-  // 6) Multi-column merge (safe heuristic)
-  // Only fix obvious glued ALL-CAPS words → insert space between adjacent ALL-CAPS tokens
-  const gluedWordsFixed = (t.match(/([A-Z]{3,})(?=[A-Z]{3,})(?!\s)/g) || []).length;
-  t = t.replace(/([A-Z]{3,})(?=[A-Z]{3,})(?!\s)/g, '$1 ');
+  // 6) Multi-column merge - REMOVED aggressive ALL-CAPS spacer rule
+  // The previous rule was too aggressive and split legitimate ALL-CAPS words
+  // const gluedWordsFixed = 0; // No longer tracking this metric
 
   // 7) Section break hints (very light)
   // Insert newline before ALL-CAPS headers stuck to prior sentence
@@ -69,6 +71,12 @@ function normalizeCanonicalText(raw, pageBreaks = []) {
   const finalLength = t.length;
   const finalNewlines = (t.match(/\n/g) || []).length;
   
+  // Guardrail: detect over-split ALL-CAPS words
+  const overSplitWords = (t.match(/^[A-Z]{2,}\s+[A-Z]{2,}$/gm) || []).length;
+  if (overSplitWords > 0) {
+    console.warn(`Warning: ${overSplitWords} potentially over-split ALL-CAPS words detected`);
+  }
+  
   // Log normalization metrics (for monitoring)
   console.log(`Normalization metrics:`, {
     originalLength,
@@ -77,8 +85,9 @@ function normalizeCanonicalText(raw, pageBreaks = []) {
     finalNewlines,
     hyphenJoins,
     bulletsNormalized,
-    gluedWordsFixed,
+    gluedWordsFixed: 0, // No longer tracking this metric
     sectionBreaks,
+    overSplitWords,
     compressionRatio: ((originalLength - finalLength) / originalLength * 100).toFixed(1) + '%'
   });
 
