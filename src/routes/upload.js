@@ -114,11 +114,13 @@ export default async function uploadRoute(app) {
       // Generate unique resume ID
       const resumeId = uuidv4();
 
+      console.log('📤 Uploading file to OpenAI...');
       // Upload file to OpenAI for AI to process
       const uploaded = await openai.files.create({
         file: await toFile(buf, filename || 'upload', { type: mimetype || 'application/octet-stream' }),
         purpose: 'assistants'
       });
+      console.log('✅ File uploaded to OpenAI, ID:', uploaded.id);
 
       // Build messages ONCE - never replace the full prompt
       const BASE_SYSTEM = `You extract plain text from résumés (any language) and return ONLY valid JSON matching the schema. Use exact wording from the document. Unknown → null. No markdown. No extra keys.`;
@@ -160,7 +162,9 @@ export default async function uploadRoute(app) {
         if (allowJsonMode) req.response_format = { type: 'json_object' }; // try JSON mode
 
         try {
+          console.log(`🤖 Calling OpenAI with model: ${req.model}`);
           const resp = await openai.responses.create(req);
+          console.log('✅ OpenAI response received');
           const text = (resp.output_text || '').trim();
 
           // If model still wrapped JSON in prose (just in case), extract first JSON object

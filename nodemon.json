@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": [
+    "resume-storage.json",
+    "node_modules",
+    ".git",
+    "*.log"
+  ],
+  "delay": "1000"
+}
