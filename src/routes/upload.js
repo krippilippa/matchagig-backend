@@ -177,10 +177,11 @@ export default async function uploadRoute(app) {
           const parsed = JSON.parse(jsonText);
           return { ok: true, data: parsed };
         } catch (e) {
-          // If JSON mode is unsupported, retry without it at the same attempt count.
+          // If JSON mode is unsupported, signal caller to retry without JSON mode
           const msg = String(e?.message || e);
           if (/Unsupported parameter/i.test(msg) && /response_format/i.test(msg) && allowJsonMode) {
-            return callExtractor(openai, fileId, attempt, /*allowJsonMode=*/false);
+            console.log('↩️  Fallback: response_format not supported, caller will retry without JSON mode');
+            return { ok: false, err: 'response_format_not_supported' };
           }
           return { ok: false, err: msg };
         }
@@ -188,16 +189,26 @@ export default async function uploadRoute(app) {
 
       let parsed;
       let errMsg = '';
-      for (let attempt = 0; attempt <= 1; attempt++) {
-        const r = await callExtractor(openai, uploaded.id, attempt, true);
-        if (!r.ok) { errMsg = r.err; continue; }
-
-        try {
-          // Zod validation (strict)
-          parsed = ResumeSchema.parse(r.data);
-          break; // success
-        } catch (zerr) {
+      // First attempt with JSON mode
+      const first = await callExtractor(openai, uploaded.id, 0, true);
+      if (first.ok) {
+        try { parsed = ResumeSchema.parse(first.data); } catch (zerr) {
           errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr);
+        }
+      } else {
+        errMsg = first.err;
+      }
+
+      // Only retry if JSON mode is unsupported
+      if (!parsed && errMsg === 'response_format_not_supported') {
+        console.log('🔁 Retrying without JSON mode...');
+        const second = await callExtractor(openai, uploaded.id, 1, false);
+        if (second.ok) {
+          try { parsed = ResumeSchema.parse(second.data); } catch (zerr) {
+            errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr);
+          }
+        } else {
+          errMsg = second.err;
         }
       }
       if (!parsed) {
