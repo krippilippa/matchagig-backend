@@ -120,55 +120,84 @@ export default async function uploadRoute(app) {
         purpose: 'assistants'
       });
 
-      // Send to GPT-5-nano for text extraction and structured output
-      let prompt = `You are a résumé text extractor. OUTPUT ONLY valid JSON with this exact schema:
-{ "name": string|null, "email": string|null, "phone": string|null, "text": string }
-Rules:
-• **name**: candidate's full name if clearly stated; else null.
-• **email**: primary email if present; else null.
-• **phone**: main phone number in international or local format if present; else null.
-• **text**: faithful plain-text extraction of the document content.
-Text extraction policy: preserve wording, punctuation, capitalization, numbers, names, and dates.
-Allowed cleanup only: fix hyphenated line breaks; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.
-Do NOT summarize or paraphrase.
-Output JSON only. No markdown. No extra keys. No comments.`;
+      // Build messages ONCE - never replace the full prompt
+      const BASE_SYSTEM = `You extract plain text from résumés (any language) and return ONLY valid JSON matching the schema. Use exact wording from the document. Unknown → null. No markdown. No extra keys.`;
+
+      const BASE_PROMPT = [
+        'OUTPUT ONLY valid JSON with this exact schema:',
+        '{ "name": string|null, "email": string|null, "phone": string|null, "text": string }',
+        'Rules:',
+        '- name: full candidate name if clearly stated; else null.',
+        '- email: primary email if present; else null.',
+        '- phone: main phone number if present; else null.',
+        '- text: faithful plain-text extraction of the document content.',
+        'Text extraction policy:',
+        '• preserve original wording, punctuation, capitalization, numbers, names, dates',
+        '• allowed cleanup only: fix hyphenated line breaks; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure',
+        'Do NOT summarize or paraphrase.',
+      ].join('\n');
+
+      async function callExtractor(openai, fileId, attempt, allowJsonMode = true) {
+        const messages = [
+          { role: 'system', content: BASE_SYSTEM },
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: BASE_PROMPT },
+              { type: 'input_file', file_id: fileId },
+            ],
+          },
+        ];
+        if (attempt > 0) {
+          messages.push({
+            role: 'user',
+            content:
+              'Your previous output failed validation. Return ONLY valid JSON matching the schema. No prose. No extra keys.',
+          });
+        }
+
+        const req = { model: process.env.OPENAI_MODEL || 'gpt-5-nano', input: messages };
+        if (allowJsonMode) req.response_format = { type: 'json_object' }; // try JSON mode
+
+        try {
+          const resp = await openai.responses.create(req);
+          const text = (resp.output_text || '').trim();
+
+          // If model still wrapped JSON in prose (just in case), extract first JSON object
+          let jsonText = text;
+          if (!(jsonText.startsWith('{') && jsonText.endsWith('}'))) {
+            const m = text.match(/\{[\s\S]*\}$/); // naive last-brace capture
+            if (m) jsonText = m[0];
+          }
+
+          const parsed = JSON.parse(jsonText);
+          return { ok: true, data: parsed };
+        } catch (e) {
+          // If JSON mode is unsupported, retry without it at the same attempt count.
+          const msg = String(e?.message || e);
+          if (/Unsupported parameter/i.test(msg) && /response_format/i.test(msg) && allowJsonMode) {
+            return callExtractor(openai, fileId, attempt, /*allowJsonMode=*/false);
+          }
+          return { ok: false, err: msg };
+        }
+      }
 
       let parsed;
-      let retryCount = 0;
-      const maxRetries = 1;
+      let errMsg = '';
+      for (let attempt = 0; attempt <= 1; attempt++) {
+        const r = await callExtractor(openai, uploaded.id, attempt, true);
+        if (!r.ok) { errMsg = r.err; continue; }
 
-      while (retryCount <= maxRetries) {
-                  try {
-            const resp = await openai.responses.create({
-              model: process.env.OPENAI_MODEL || 'gpt-5-nano',
-              input: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'input_text', text: prompt },
-                  { type: 'input_file', file_id: uploaded.id }
-                ]
-              }
-            ]
-          });
-
-          const outputText = (resp.output_text || '').trim();
-          parsed = JSON.parse(outputText);
-          
-          // Validate against schema
-          const validated = ResumeSchema.parse(parsed);
-          parsed = validated;
-          break; // Success, exit retry loop
-          
-        } catch (parseError) {
-          retryCount++;
-          if (retryCount > maxRetries) {
-            throw new Error(`Failed to parse JSON after ${maxRetries + 1} attempts: ${parseError.message}`);
-          }
-          
-          // Retry with stricter prompt
-          prompt = `Your previous output failed validation. Return ONLY valid JSON matching the schema. No prose.`;
+        try {
+          // Zod validation (strict)
+          parsed = ResumeSchema.parse(r.data);
+          break; // success
+        } catch (zerr) {
+          errMsg = zerr.errors ? JSON.stringify(zerr.errors, null, 2) : String(zerr.message || zerr);
         }
+      }
+      if (!parsed) {
+        throw new Error(`Failed to parse JSON after 2 attempts: ${errMsg}`);
       }
 
       // Store canonical resume data (AI-extracted text)
