@@ -132,9 +132,10 @@ Schema:
 { "achievements": [ { "text": string } ] }
 
 Rules:
-- "Achievement" = a concise, outcome/result statement reporting something accomplished or changed. 
-- Exclude duties, responsibilities, ongoing activities, or task lists.
-- Copy wording from the résumé line(s) but remove any numbers/symbols/units from the output text.
+- An "achievement" must describe a completed change or outcome (something that was achieved, delivered, launched, implemented, improved, won, or otherwise finished). 
+- Exclude duties, responsibilities, ongoing activities, or generic capabilities (e.g., supervising, planning, building relationships) unless the line also includes a clear outcome clause (what changed as a result).
+- Copy the original wording but remove any numbers, symbols, and units from the output text.
+- Keep each item concise (one sentence or clause).
 - If none qualify, return { "achievements": [] }.
 - JSON only.
 
@@ -398,6 +399,10 @@ export default async function overviewRoute(app) {
       overview.functions = (answers.primary_functions?.functions || []).map(s =>
         s ? s.replace(/\w\S*/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) : s
       );
+
+      // Filter out clearly responsibility-focused achievements (safety net)
+      overview.topAchievements = (answers.top3_achievements?.achievements || [])
+        .filter(a => a && a.text && !/^(Leading|Managing|Building|Creating|Developing)\b/i.test(a.text));
 
       // Return overview with metadata
       return reply.send({
