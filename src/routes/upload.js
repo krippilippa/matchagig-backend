@@ -16,8 +16,38 @@ export function getResumeStorage() {
 const ResumeSchema = z.object({
   name: z.string().nullable(),
   email: z.string().nullable(),
+  phone: z.string().nullable(),
   text: z.string().min(1, "Text must not be empty")
 }).strict(); // No extra keys allowed
+
+// Post-processing normalization for canonical text
+function normalizeCanonicalText(text) {
+  return text
+    // 1. Whitespace & tabs normalization
+    .replace(/\t/g, ' ')                    // Convert tabs to spaces
+    .replace(/[ \t]+/g, ' ')                // Collapse multiple spaces/tabs to single space
+    
+    // 2. Hyphenation rules - join words split by linebreak hyphens
+    .replace(/([A-Za-z])-\s*\n\s*([A-Za-z])/g, '$1$2')  // Linebreak hyphens
+    .replace(/([A-Za-z])-\s+([A-Za-z])/g, '$1$2')       // Space-separated hyphens
+    
+    // 3. UTF-8 normalization and control chars
+    .normalize('NFC')                       // Normalize to NFC
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')  // Remove control chars
+    
+    // 4. Bullet normalization - standardize all list markers
+    .replace(/^[•–—]\s*/gm, '- ')           // Convert bullets to standard format
+    .replace(/^[-]\s*/gm, '- ')             // Ensure consistent spacing
+    
+    // 5. Header/footer scrubbing
+    .replace(/^Page\s+\d+$/gm, '')          // Remove page numbers
+    .replace(/^\s*$/gm, '')                 // Remove empty lines
+    
+    // 6. Final whitespace cleanup while preserving structure
+    .replace(/\n\s*\n\s*\n/g, '\n\n')      // Max 2 consecutive line breaks
+    .replace(/^\s+|\s+$/gm, '')            // Trim lines
+    .trim();                                // Trim overall text
+}
 
 export default async function uploadRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -53,21 +83,17 @@ export default async function uploadRoute(app) {
       });
 
       // Send to GPT-5-nano for text extraction and structured output
-      let prompt = `You are a résumé text extractor. Read the attached file and OUTPUT ONLY valid JSON with this exact schema:
-{
-  "name": string|null,
-  "email": string|null,
-  "text": string
-}
+      let prompt = `You are a résumé text extractor. OUTPUT ONLY valid JSON with this exact schema:
+{ "name": string|null, "email": string|null, "phone": string|null, "text": string }
 Rules:
-- name: full candidate name if clearly stated; else null.
-- email: primary email if present; else null.
-- text: faithful plain-text extraction of the document content.
-Text extraction rules:
-- Preserve all wording, punctuation, capitalization, numbers, names, and dates.
-- Allowed cleanup: fix hyphenated line breaks; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.
-- Do NOT summarize, paraphrase, or infer content.
-Output JSON only. No markdown, no extra keys, no comments.`;
+• **name**: candidate's full name if clearly stated; else null.
+• **email**: primary email if present; else null.
+• **phone**: main phone number in international or local format if present; else null.
+• **text**: faithful plain-text extraction of the document content.
+Text extraction policy: preserve wording, punctuation, capitalization, numbers, names, and dates.
+Allowed cleanup only: fix hyphenated line breaks; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.
+Do NOT summarize or paraphrase.
+Output JSON only. No markdown. No extra keys. No comments.`;
 
       let parsed;
       let retryCount = 0;
@@ -112,7 +138,8 @@ Output JSON only. No markdown, no extra keys, no comments.`;
         resumeId,
         name: parsed.name,
         email: parsed.email,
-        canonicalText: parsed.text,
+        phone: parsed.phone,
+        canonicalText: normalizeCanonicalText(parsed.text),
         uploadedAt: Date.now()
       };
       
@@ -123,6 +150,7 @@ Output JSON only. No markdown, no extra keys, no comments.`;
         resumeId,
         name: parsed.name,
         email: parsed.email,
+        phone: parsed.phone,
         length: parsed.text.length
       });
 
@@ -145,6 +173,7 @@ Output JSON only. No markdown, no extra keys, no comments.`;
       resumeId,
       name: resumeData.name,
       email: resumeData.email,
+      phone: resumeData.phone,
       canonicalText: resumeData.canonicalText,
       uploadedAt: resumeData.uploadedAt
     });

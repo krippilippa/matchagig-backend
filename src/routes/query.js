@@ -32,7 +32,7 @@ export default async function queryRoute(app) {
         return reply.code(404).send(err('NOT_FOUND', 'Resume not found. Please upload first.'));
       }
 
-      const { canonicalText, name, email } = resumeData;
+      const { canonicalText, name, email, phone } = resumeData;
 
       // Use the canonical text directly instead of re-uploading the file
       const prompt = `Use the following résumé text to answer the question succinctly. If sections are present, respect them.
@@ -40,6 +40,7 @@ export default async function queryRoute(app) {
 Resume Information:
 - Name: ${name || 'Not provided'}
 - Email: ${email || 'Not provided'}
+- Phone: ${phone || 'Not provided'}
 
 Resume Text:
 ${canonicalText}
