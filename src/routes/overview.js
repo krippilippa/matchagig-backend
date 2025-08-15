@@ -248,8 +248,7 @@ async function runMicroPrompt(openai, basePrompt, canonicalText, promptKey, maxR
       const resp = await openai.responses.create({
         model: process.env.OPENAI_MODEL || 'gpt-5-nano',
         temperature: 0.1,
-        input: messages,
-        response_format: { type: 'json_object' } // Force JSON mode
+        input: messages
       });
 
       const outputText = (resp.output_text || '').trim();
