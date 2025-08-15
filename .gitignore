@@ -18,3 +18,6 @@ pnpm-debug.log*
 /dist/
 /build/
 /coverage/
+
+# Local storage
+resume-storage.json
