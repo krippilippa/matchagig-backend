@@ -7,6 +7,22 @@ const SYSTEM_MESSAGE = `You extract facts from a résumé. Output ONLY valid JSO
 // Retry message for validation failures
 const RETRY_MESSAGE = `Your previous output was invalid. Return ONLY valid JSON that matches the schema. No prose.`;
 
+// Helper functions for targeted snippets
+function headerSnippet(text) { 
+  return text.split('\n').slice(0, 15).join('\n'); 
+}
+
+function topSnippet(text) { 
+  return text.split('\n').slice(0, 120).join('\n'); 
+}
+
+// Clean employer name for display (remove trailing descriptors)
+function displayEmployer(raw) {
+  if (!raw) return raw;
+  const cut = raw.split(/[:–—-]\s/)[0]; // conservative split
+  return cut.length >= 3 ? cut : raw;
+}
+
 // The 7 micro-prompts with their schemas
 const MICRO_PROMPTS = {
   current_title: {
@@ -161,20 +177,79 @@ Text:
   }
 };
 
+// Per-prompt schema validation functions
+function assertShape_currentTitle(x) {
+  return x && (typeof x.currentTitle === 'string' || x.currentTitle === null)
+      && (['Junior', 'Mid', 'Senior', 'Lead/Head', 'Unknown', null].includes(x.seniorityHint));
+}
+
+function assertShape_currentEmployer(x) {
+  return x && (typeof x.currentEmployer === 'string' || x.currentEmployer === null);
+}
+
+function assertShape_totalYoeEstimate(x) {
+  return x && (typeof x.totalYearsExperience === 'number' || x.totalYearsExperience === null)
+      && (['self-reported', 'date-derived', 'mixed', 'unknown'].includes(x.basis));
+}
+
+function assertShape_highestEducation(x) {
+  return x && (['PhD/Doctorate', 'Master', 'Bachelor', 'Associate', 'Diploma/Certificate', 'High School', 'Unknown', null].includes(x.level))
+      && (typeof x.degreeName === 'string' || x.degreeName === null)
+      && (typeof x.field === 'string' || x.field === null)
+      && (typeof x.institution === 'string' || x.institution === null)
+      && (typeof x.year === 'string' || x.year === null);
+}
+
+function assertShape_top3Achievements(x) {
+  return x && Array.isArray(x.achievements) && x.achievements.every(achievement => 
+    typeof achievement.text === 'string' &&
+    (typeof achievement.value === 'number' || achievement.value === null) &&
+    (['percent', 'currency', 'count', 'time', 'rate', 'other', null].includes(achievement.unit)) &&
+    (typeof achievement.subject === 'string' || achievement.subject === null)
+  );
+}
+
+function assertShape_primaryFunctions(x) {
+  return x && Array.isArray(x.functions) && x.functions.every(f => typeof f === 'string');
+}
+
+function assertShape_locationSimple(x) {
+  return x && (typeof x.city === 'string' || x.city === null)
+      && (typeof x.country === 'string' || x.country === null);
+}
+
+// Validation mapping
+const VALIDATORS = {
+  current_title: assertShape_currentTitle,
+  current_employer: assertShape_currentEmployer,
+  total_yoe_estimate: assertShape_totalYoeEstimate,
+  highest_education: assertShape_highestEducation,
+  top3_achievements: assertShape_top3Achievements,
+  primary_functions: assertShape_primaryFunctions,
+  location_simple: assertShape_locationSimple
+};
+
 // Run a single micro-prompt with retry logic
-async function runMicroPrompt(openai, prompt, canonicalText, maxRetries = 1) {
-  let attempt = 0;
+async function runMicroPrompt(openai, basePrompt, canonicalText, promptKey, maxRetries = 1) {
+  const userMsg = basePrompt.replace('<<<CANONICAL_TEXT>>>', canonicalText);
   
-  while (attempt <= maxRetries) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const userMessage = prompt.replace('<<<CANONICAL_TEXT>>>', canonicalText);
+      const messages = [
+        { role: 'system', content: SYSTEM_MESSAGE },
+        { role: 'user', content: userMsg }
+      ];
+      
+      // Add retry message as second user message if this is a retry
+      if (attempt > 0) {
+        messages.push({ role: 'user', content: RETRY_MESSAGE });
+      }
       
       const resp = await openai.responses.create({
         model: process.env.OPENAI_MODEL || 'gpt-5-nano',
-        input: [
-          { role: 'system', content: SYSTEM_MESSAGE },
-          { role: 'user', content: userMessage }
-        ]
+        temperature: 0.1,
+        input: messages,
+        response_format: { type: 'json_object' } // Force JSON mode
       });
 
       const outputText = (resp.output_text || '').trim();
@@ -185,19 +260,22 @@ async function runMicroPrompt(openai, prompt, canonicalText, maxRetries = 1) {
         throw new Error('Output is not a valid JSON object');
       }
       
+      // Schema validation using the appropriate validator
+      const validator = VALIDATORS[promptKey];
+      if (validator && !validator(parsed)) {
+        throw new Error('Output does not match expected schema');
+      }
+      
       return { success: true, data: parsed };
       
     } catch (error) {
-      attempt++;
-      if (attempt > maxRetries) {
+      if (attempt === maxRetries) {
         return { 
           success: false, 
           error: `Failed after ${maxRetries + 1} attempts: ${error.message}` 
         };
       }
-      
-      // On retry, use the retry message
-      prompt = RETRY_MESSAGE;
+      // Continue to retry - don't modify the base prompt
     }
   }
 }
@@ -231,19 +309,42 @@ export default async function overviewRoute(app) {
 
       const { canonicalText, name, email, phone } = resumeData;
       
-      // Run all 7 micro-prompts in parallel
+      // Run all 7 micro-prompts in parallel with targeted snippets
       const promptPromises = Object.entries(MICRO_PROMPTS).map(async ([key, config]) => {
-        const result = await runMicroPrompt(openai, config.prompt, canonicalText);
+        let textToUse = canonicalText;
+        
+        // Use targeted snippets for specific prompts
+        if (key === 'current_title' || key === 'current_employer') {
+          textToUse = topSnippet(canonicalText);
+        } else if (key === 'location_simple') {
+          textToUse = headerSnippet(canonicalText);
+        }
+        
+        const result = await runMicroPrompt(openai, config.prompt, textToUse, key);
         return { key, ...result };
       });
 
-      const results = await Promise.all(promptPromises);
+      const results = await Promise.allSettled(promptPromises);
+      
+      // Process results and handle both fulfilled and rejected promises
+      const processedResults = results.map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        } else {
+          const key = Object.keys(MICRO_PROMPTS)[index];
+          return { 
+            key, 
+            success: false, 
+            error: `Promise rejected: ${result.reason?.message || 'Unknown error'}` 
+          };
+        }
+      });
       
       // Process results and build overview
       const answers = {};
       const errors = [];
       
-      results.forEach(result => {
+      processedResults.forEach(result => {
         if (result.success) {
           answers[result.key] = result.data;
         } else {
@@ -256,8 +357,9 @@ export default async function overviewRoute(app) {
       const overview = {
         title: answers.current_title?.currentTitle || null,
         seniorityHint: answers.current_title?.seniorityHint || null,
-        employer: answers.current_employer?.currentEmployer || null,
+        employer: displayEmployer(answers.current_employer?.currentEmployer || null),
         yoe: answers.total_yoe_estimate?.totalYearsExperience || null,
+        yoeBasis: answers.total_yoe_estimate?.basis || null,
         education: answers.highest_education || null,
         topAchievements: answers.top3_achievements?.achievements || [],
         functions: answers.primary_functions?.functions || [],
