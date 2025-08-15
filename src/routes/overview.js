@@ -57,10 +57,11 @@ Schema:
 
 Rules:
 - Identify the employer for the most recent role (or the one marked "Present"/"to date").
-- employerRaw: the full employer string as written.
-- If the line contains a separator followed by descriptive text (tagline, sector, explanation), split it into:
+- employerRaw: the full employer string as written in the résumé.
+- If the string contains a separator followed by descriptive text (tagline, sector positioning, brief description), split it into:
   - employerName: the organization name portion only
   - employerDescriptor: the trailing descriptive portion only
+- Do NOT include dates, locations, or work-mode notes (e.g., "May 2022–Sept 2024", "Remote", "US-based") in employerDescriptor. If such items appear, exclude them from employerDescriptor.
 - If unsure, set employerName = employerRaw and employerDescriptor = null.
 - JSON only.
 
@@ -125,15 +126,16 @@ Text:
   },
 
   top3_achievements: {
-    prompt: `Identify up to three strong achievements from the résumé.
+    prompt: `Identify up to three achievements from the résumé.
 
 Schema:
 { "achievements": [ { "text": string } ] }
 
 Rules:
-- "Achievement" = a short outcome/result statement copied from the résumé (keep original wording; you may trim surrounding filler).
-- Do NOT include numbers, symbols, or units in the output ("text" must be words only).
-- If none exist, return { "achievements": [] }.
+- "Achievement" = a concise, outcome/result statement reporting something accomplished or changed. 
+- Exclude duties, responsibilities, ongoing activities, or task lists.
+- Copy wording from the résumé line(s) but remove any numbers/symbols/units from the output text.
+- If none qualify, return { "achievements": [] }.
 - JSON only.
 
 Text:
@@ -144,16 +146,17 @@ Text:
   },
 
   primary_functions: {
-    prompt: `From the résumé text below, return the candidate's primary function(s).
+    prompt: `From the résumé text below, return the candidate's primary professional function(s).
 
 Schema:
-{ "functions": string[] }   // up to 2 items; examples: "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"
+{ "functions": string[] }   // up to 2 items, e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"
 
 Rules:
-- Return 1–2 broad functions that best describe the candidate's core work from the résumé. 
-- Prefer consistently repeated functions over isolated mentions.
-- Use generic labels (no company-specific jargon).
+- Return 1–2 broad professional domains that best represent the candidate's core work across roles.
+- Use generic domain labels only (no tools, no industries, no company-specific terms).
+- Capitalize each item in Title Case.
 - If unclear, return [].
+- JSON only.
 
 Text:
 <<<CANONICAL_TEXT>>>`,
@@ -390,6 +393,11 @@ export default async function overviewRoute(app) {
         employerRaw: answers.current_employer?.employerRaw || null,
         employerDescriptor: answers.current_employer?.employerDescriptor || null
       };
+
+      // Title-Case functions as final guard (keeps output pretty even if model slips)
+      overview.functions = (answers.primary_functions?.functions || []).map(s =>
+        s ? s.replace(/\w\S*/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) : s
+      );
 
       // Return overview with metadata
       return reply.send({
