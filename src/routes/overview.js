@@ -57,12 +57,12 @@ Schema:
 
 Rules:
 - Identify the employer for the most recent role (or the one marked "Present"/"to date").
-- employerRaw: the full employer string as written in the résumé.
-- If the string contains a separator followed by descriptive text (tagline, sector positioning, brief description), split it into:
-  - employerName: the organization name portion only
-  - employerDescriptor: the trailing descriptive portion only
-- Do NOT include dates, locations, or work-mode notes (e.g., "May 2022–Sept 2024", "Remote", "US-based") in employerDescriptor. If such items appear, exclude them from employerDescriptor.
-- If unsure, set employerName = employerRaw and employerDescriptor = null.
+- employerRaw: the organization name ONLY as it appears in the résumé (no job title, no dates, no work mode, no location, no separators like “|” or “–” content that follows).
+- If the organization name appears on the same line as other info (e.g., job title, dates, locations, work mode), select only the organization name portion and exclude the rest.
+- employerName: same value as employerRaw (organization name only).
+- employerDescriptor: if a brief tagline/sector/descriptor immediately follows the organization name after a separator (e.g., “:”, “–”, “—”), return that descriptor; do NOT include dates, locations, or work mode notes in employerDescriptor.
+- If you cannot confidently split, set employerName = employerRaw and employerDescriptor = null.
+- Use exact wording from the résumé; do not normalize or translate.
 - JSON only.
 
 Text:
@@ -132,11 +132,15 @@ Schema:
 { "achievements": [ { "text": string } ] }
 
 Rules:
-- An "achievement" must describe a completed change or outcome (something that was achieved, delivered, launched, implemented, improved, won, or otherwise finished). 
-- Exclude duties, responsibilities, ongoing activities, or generic capabilities (e.g., supervising, planning, building relationships) unless the line also includes a clear outcome clause (what changed as a result).
-- Copy the original wording but remove any numbers, symbols, and units from the output text.
+- An achievement is a completed result or change — something that happened and is done.  
+  It can be a win, improvement, launch, delivery, resolved problem, secured deal, growth, or any measurable success.
+- Do NOT include:
+  • Ongoing tasks or maintenance (e.g., "Maintained accounts", "Managing daily operations") unless tied to a clear outcome.
+  • Pure responsibilities (e.g., "Responsible for...", "Leading a team") without a stated result.
+  • Generic skills or capability statements.
+- Copy the exact wording from the résumé, but remove any numbers, units, and currency symbols.
 - Keep each item concise (one sentence or clause).
-- If none qualify, return { "achievements": [] }.
+- If no qualifying achievements exist, return { "achievements": [] }.
 - JSON only.
 
 Text:
