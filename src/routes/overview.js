@@ -46,38 +46,52 @@ Text:
   },
 
   current_employer: {
-    prompt: `From the résumé text below, return the current or most recent employer/company/organization.
+    prompt: `From the résumé text below, return the current or most recent employer split into three fields.
 
 Schema:
-{ "currentEmployer": string|null }
+{
+  "employerRaw": string|null,
+  "employerName": string|null,
+  "employerDescriptor": string|null
+}
 
 Rules:
-- currentEmployer = employer for the most recent role OR the role marked "Present"/"to date".
-- Copy exactly as written (do not expand or translate).
-- If unclear, return null.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: { currentEmployer: 'string|null' }
-  },
-
-  total_yoe_estimate: {
-    prompt: `Estimate the candidate's total years of professional experience from the résumé text.
-
-Schema:
-{ "totalYearsExperience": number|null, "basis": "self-reported"|"date-derived"|"mixed"|"unknown" }
-
-Rules:
-- Return a single number in years (decimals allowed). If uncertain, return null.
-- If the résumé explicitly states "X years", prefer that and set basis="self-reported".
-- If you infer from dates or phrases, basis="date-derived" or "mixed".
-- Do not output ranges (use a single numeric estimate).
+- Identify the employer for the most recent role (or the one marked "Present"/"to date").
+- employerRaw: the full employer string as written.
+- If the line contains a separator followed by descriptive text (tagline, sector, explanation), split it into:
+  - employerName: the organization name portion only
+  - employerDescriptor: the trailing descriptive portion only
+- If unsure, set employerName = employerRaw and employerDescriptor = null.
+- JSON only.
 
 Text:
 <<<CANONICAL_TEXT>>>`,
     schema: {
-      totalYearsExperience: 'number|null',
-      basis: '"self-reported"|"date-derived"|"mixed"|"unknown"'
+      employerRaw: 'string|null',
+      employerName: 'string|null',
+      employerDescriptor: 'string|null'
+    }
+  },
+
+  total_yoe_estimate: {
+    prompt: `From the résumé text below, estimate total years of professional experience. Return BOTH a self-reported value (if any wording like "X years" appears) AND a date-derived value (rough estimate from role dates or tenure clues). Do not output ranges; use a single numeric estimate for each. If either cannot be determined, set it to null.
+
+Schema:
+{
+  "selfReportedYears": number|null,
+  "dateDerivedYears": number|null
+}
+
+Rules:
+- selfReportedYears: only when the résumé literally states total years (e.g., "over 10 years"); convert to a single number (e.g., "over 10 years" → 10).
+- dateDerivedYears: best-effort single numeric estimate from the document's role/tenure cues.
+- Do not include text explanations. JSON only.
+
+Text:
+<<<CANONICAL_TEXT>>>`,
+    schema: {
+      selfReportedYears: 'number|null',
+      dateDerivedYears: 'number|null'
     }
   },
 
@@ -111,35 +125,21 @@ Text:
   },
 
   top3_achievements: {
-    prompt: `Identify up to three strongest quantified achievements (metric-first).
+    prompt: `Identify up to three strong achievements from the résumé.
 
 Schema:
-{
-  "achievements": [
-    {
-      "text": string,                            // copy minimal original line or phrase
-      "value": number|null,                      // pick the main numeric value; if a range "15–20%", choose a representative mid-point (e.g., 17.5)
-      "unit": "percent"|"currency"|"count"|"time"|"rate"|"other"|null,
-      "subject": string|null                     // e.g., "revenue", "sales", "accounts", "NPS", "cost", "cycle time"
-    }
-  ]
-}
+{ "achievements": [ { "text": string } ] }
 
 Rules:
-- "Quantified" means a number + an explicit unit/context (%, $, €, £, K/M, customers/accounts/revenue, days/weeks/months/hours, etc.) with a performance verb (increase/reduce/grow/improve/cut/expand/manage/achieved/drove).
-- Choose the 1–3 most material achievements; prefer % or currency magnitude, then breadth (national/global).
-- Keep wording faithful (light trim allowed). Unknown parts → null.
-- If none exist, return {"achievements": []}.
+- "Achievement" = a short outcome/result statement copied from the résumé (keep original wording; you may trim surrounding filler).
+- Do NOT include numbers, symbols, or units in the output ("text" must be words only).
+- If none exist, return { "achievements": [] }.
+- JSON only.
 
 Text:
 <<<CANONICAL_TEXT>>>`,
     schema: {
-      achievements: [{
-        text: 'string',
-        value: 'number|null',
-        unit: '"percent"|"currency"|"count"|"time"|"rate"|"other"|null',
-        subject: 'string|null'
-      }]
+      achievements: [{ text: 'string' }]
     }
   },
 
@@ -184,12 +184,16 @@ function assertShape_currentTitle(x) {
 }
 
 function assertShape_currentEmployer(x) {
-  return x && (typeof x.currentEmployer === 'string' || x.currentEmployer === null);
+  return x
+    && (typeof x.employerRaw === 'string' || x.employerRaw === null)
+    && (typeof x.employerName === 'string' || x.employerName === null)
+    && (typeof x.employerDescriptor === 'string' || x.employerDescriptor === null);
 }
 
 function assertShape_totalYoeEstimate(x) {
-  return x && (typeof x.totalYearsExperience === 'number' || x.totalYearsExperience === null)
-      && (['self-reported', 'date-derived', 'mixed', 'unknown'].includes(x.basis));
+  return x
+    && (typeof x.selfReportedYears === 'number' || x.selfReportedYears === null)
+    && (typeof x.dateDerivedYears === 'number' || x.dateDerivedYears === null);
 }
 
 function assertShape_highestEducation(x) {
@@ -201,12 +205,8 @@ function assertShape_highestEducation(x) {
 }
 
 function assertShape_top3Achievements(x) {
-  return x && Array.isArray(x.achievements) && x.achievements.every(achievement => 
-    typeof achievement.text === 'string' &&
-    (typeof achievement.value === 'number' || achievement.value === null) &&
-    (['percent', 'currency', 'count', 'time', 'rate', 'other', null].includes(achievement.unit)) &&
-    (typeof achievement.subject === 'string' || achievement.subject === null)
-  );
+  return x && Array.isArray(x.achievements) &&
+    x.achievements.every(a => typeof a.text === 'string');
 }
 
 function assertShape_primaryFunctions(x) {
@@ -376,16 +376,19 @@ export default async function overviewRoute(app) {
       const overview = {
         title: answers.current_title?.currentTitle || null,
         seniorityHint: answers.current_title?.seniorityHint || null,
-        employer: displayEmployer(answers.current_employer?.currentEmployer || null),
-        yoe: answers.total_yoe_estimate?.totalYearsExperience || null,
-        yoeBasis: answers.total_yoe_estimate?.basis || null,
+        employer: displayEmployer(answers.current_employer?.employerName || null),
+        yoe: (answers.total_yoe_estimate?.selfReportedYears ?? answers.total_yoe_estimate?.dateDerivedYears ?? null),
+        yoeBasis: (answers.total_yoe_estimate?.selfReportedYears != null ? 'self-reported' : (answers.total_yoe_estimate?.dateDerivedYears != null ? 'date-derived' : null)),
         education: answers.highest_education || null,
         topAchievements: answers.top3_achievements?.achievements || [],
         functions: answers.primary_functions?.functions || [],
         location: {
           city: answers.location_simple?.city || null,
           country: answers.location_simple?.country || null
-        }
+        },
+        // Raw employer fields for database storage (non-breaking addition)
+        employerRaw: answers.current_employer?.employerRaw || null,
+        employerDescriptor: answers.current_employer?.employerDescriptor || null
       };
 
       // Return overview with metadata
