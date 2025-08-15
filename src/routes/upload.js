@@ -14,7 +14,9 @@ export function getResumeStorage() {
 
 // Export storage setter for server to inject shared storage
 export function setResumeStorage(storage) {
+  console.log('🔧 Upload route: Setting resume storage, current size:', storage.size);
   resumeStorage = storage;
+  console.log('✅ Upload route: Resume storage set, new size:', resumeStorage.size);
 }
 
 // JSON schema validation
@@ -203,7 +205,11 @@ Output JSON only. No markdown. No extra keys. No comments.`;
         uploadedAt: Date.now()
       };
       
+      console.log('🔧 Storing resume data for ID:', resumeId);
+      console.log('🔧 Current storage size before:', resumeStorage.size);
       resumeStorage.set(resumeId, resumeData);
+      console.log('✅ Resume stored successfully. New storage size:', resumeStorage.size);
+      console.log('🔧 Stored keys:', Array.from(resumeStorage.keys()));
 
       // Return response
       return reply.send({

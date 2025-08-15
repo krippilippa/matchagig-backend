@@ -5,7 +5,9 @@ let resumeStorage;
 
 // This function will be called by the main server to share the storage
 export function setResumeStorage(storage) {
+  console.log('🔧 Overview route: Setting resume storage, current size:', storage.size);
   resumeStorage = storage;
+  console.log('✅ Overview route: Resume storage set, new size:', resumeStorage.size);
 }
 
 // Shared system message for all prompts
@@ -227,6 +229,11 @@ export default async function overviewRoute(app) {
 
       // Fetch canonical text from storage
       const resumeData = resumeStorage?.get(resumeId);
+      console.log('🔧 Overview route: Looking for resumeId:', resumeId);
+      console.log('🔧 Overview route: Current storage size:', resumeStorage?.size || 0);
+      console.log('🔧 Overview route: Stored keys:', Array.from(resumeStorage?.keys() || []));
+      console.log('🔧 Overview route: Found resume data:', !!resumeData);
+      
       if (!resumeData) {
         return reply.code(404).send(err('NOT_FOUND', 'Resume not found. Please upload first.'));
       }
