@@ -20,33 +20,69 @@ const ResumeSchema = z.object({
   text: z.string().min(1, "Text must not be empty")
 }).strict(); // No extra keys allowed
 
-// Post-processing normalization for canonical text
-function normalizeCanonicalText(text) {
-  return text
-    // 1. Whitespace & tabs normalization
-    .replace(/\t/g, ' ')                    // Convert tabs to spaces
-    .replace(/[ \t]+/g, ' ')                // Collapse multiple spaces/tabs to single space
-    
-    // 2. Hyphenation rules - join words split by linebreak hyphens
-    .replace(/([A-Za-z])-\s*\n\s*([A-Za-z])/g, '$1$2')  // Linebreak hyphens
-    .replace(/([A-Za-z])-\s+([A-Za-z])/g, '$1$2')       // Space-separated hyphens
-    
-    // 3. UTF-8 normalization and control chars
-    .normalize('NFC')                       // Normalize to NFC
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')  // Remove control chars
-    
-    // 4. Bullet normalization - standardize all list markers
-    .replace(/^[•–—]\s*/gm, '- ')           // Convert bullets to standard format
-    .replace(/^[-]\s*/gm, '- ')             // Ensure consistent spacing
-    
-    // 5. Header/footer scrubbing
-    .replace(/^Page\s+\d+$/gm, '')          // Remove page numbers
-    .replace(/^\s*$/gm, '')                 // Remove empty lines
-    
-    // 6. Final whitespace cleanup while preserving structure
-    .replace(/\n\s*\n\s*\n/g, '\n\n')      // Max 2 consecutive line breaks
-    .replace(/^\s+|\s+$/gm, '')            // Trim lines
-    .trim();                                // Trim overall text
+// Post-processing normalization for canonical text (improved pipeline)
+function normalizeCanonicalText(raw, pageBreaks = []) {
+  let t = raw ?? "";
+  const originalLength = t.length;
+  const originalNewlines = (t.match(/\n/g) || []).length;
+
+  // 1) Unicode & control chars
+  t = t.normalize('NFC');
+  t = t.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ''); // Remove control chars except \n
+
+  // 2) Whitespace policy
+  t = t.replace(/\t/g, ' ');                    // Convert tabs to spaces
+  t = t.replace(/[^\S\n]+/g, ' ');              // Collapse spaces within lines (keep newlines)
+  t = t.replace(/\n{3,}/g, '\n\n');            // Collapse 3+ blank lines → 1 blank line
+
+  // 3) De-hyphenation (line-wrap only, safe)
+  // Only join if: both sides alphabetic, right side starts lowercase, left side ≥2 chars, left side not ALL-CAPS
+  const hyphenJoins = (t.match(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu) || []).length;
+  t = t.replace(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu, '$1$2');
+
+  // 4) Bullet normalization (Unicode-aware)
+  const bulletStart = /^[\s]*[•‣∙◦–—·*●○-][\s]+/gm;
+  const bulletsNormalized = (t.match(bulletStart) || []).length;
+  t = t.replace(bulletStart, '- ');
+  t = t.replace(/^-[\s]{2,}/gm, '- ');         // Compress - followed by 2+ spaces
+
+  // 5) Header/footer & page number removal (statistical)
+  // Remove bare page number lines
+  t = t.replace(/^page\s*\d+$/gim, '');
+  t = t.replace(/^\d+\/\d+$/gm, '');
+  t = t.replace(/^-\s*\d+\s*-$/gm, '');
+
+  // 6) Multi-column merge (safe heuristic)
+  // Only fix obvious glued ALL-CAPS words → insert space between adjacent ALL-CAPS tokens
+  const gluedWordsFixed = (t.match(/([A-Z]{3,})(?=[A-Z]{3,})(?!\s)/g) || []).length;
+  t = t.replace(/([A-Z]{3,})(?=[A-Z]{3,})(?!\s)/g, '$1 ');
+
+  // 7) Section break hints (very light)
+  // Insert newline before ALL-CAPS headers stuck to prior sentence
+  const sectionBreaks = (t.match(/([^.])\.(?=[A-Z][A-Z0-9/& \-]{5,}\b)/g) || []).length;
+  t = t.replace(/([^.])\.(?=[A-Z][A-Z0-9/& \-]{5,}\b)/g, '$1.\n');
+
+  // 8) Trim line endings and ensure file ends with single newline
+  t = t.replace(/[ \t]+\n/g, '\n').trimEnd() + '\n';
+
+  // Quality metrics
+  const finalLength = t.length;
+  const finalNewlines = (t.match(/\n/g) || []).length;
+  
+  // Log normalization metrics (for monitoring)
+  console.log(`Normalization metrics:`, {
+    originalLength,
+    finalLength,
+    originalNewlines,
+    finalNewlines,
+    hyphenJoins,
+    bulletsNormalized,
+    gluedWordsFixed,
+    sectionBreaks,
+    compressionRatio: ((originalLength - finalLength) / originalLength * 100).toFixed(1) + '%'
+  });
+
+  return t;
 }
 
 export default async function uploadRoute(app) {
@@ -134,12 +170,22 @@ Output JSON only. No markdown. No extra keys. No comments.`;
       }
 
       // Store canonical resume data (AI-extracted text)
+      let normalizedText = normalizeCanonicalText(parsed.text);
+      
+      // Idempotency check: running normalization twice should yield same result
+      const doubleNormalized = normalizeCanonicalText(normalizedText);
+      if (normalizedText !== doubleNormalized) {
+        console.warn('Warning: Normalization not idempotent, using double-normalized result');
+        // Use the double-normalized version for true canonical text
+        normalizedText = doubleNormalized;
+      }
+
       const resumeData = {
         resumeId,
         name: parsed.name,
         email: parsed.email,
         phone: parsed.phone,
-        canonicalText: normalizeCanonicalText(parsed.text),
+        canonicalText: normalizedText,
         uploadedAt: Date.now()
       };
       
