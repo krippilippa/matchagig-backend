@@ -91,6 +91,7 @@ export default async function uploadRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   app.post('/v1/upload', async (req, reply) => {
+    console.log('🚀 Upload request started');
     const ctype = req.headers['content-type'] || '';
     if (!ctype.includes('multipart/form-data')) {
       return reply.code(415).send(err('UNSUPPORTED_MEDIA_TYPE', 'Use multipart/form-data'));
@@ -100,12 +101,14 @@ export default async function uploadRoute(app) {
     }
 
     try {
+      console.log('📁 Processing multipart request...');
       const parts = req.parts();
       let filePart = null;
       for await (const part of parts) {
         if (part.type === 'file' && !filePart) filePart = part; else await part?.toBuffer?.().catch(() => {});
       }
       if (!filePart) return reply.code(400).send(err('BAD_REQUEST', 'No file provided'));
+      console.log('📄 File part found:', filePart.filename);
 
       const { filename, mimetype } = filePart;
       const buf = await filePart.toBuffer();
