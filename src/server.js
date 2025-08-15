@@ -21,11 +21,28 @@ await app.register(multipart, {
 });
 
 app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
+
+// Register routes
 await app.register(uploadRoute);
 await app.register(queryRoute);
 await app.register(summaryRoute);
 await app.register(redflagsRoute);
 
+// Share resume storage between routes (temporary solution - replace with proper DB in production)
+// This ensures all routes can access the canonical resume data
+if (typeof uploadRoute.setResumeStorage === 'function') {
+  // Get the storage from upload route and share it
+  const storage = uploadRoute.getResumeStorage?.() || new Map();
+  if (typeof queryRoute.setResumeStorage === 'function') {
+    queryRoute.setResumeStorage(storage);
+  }
+  if (typeof summaryRoute.setResumeStorage === 'function') {
+    summaryRoute.setResumeStorage(storage);
+  }
+  if (typeof redflagsRoute.setResumeStorage === 'function') {
+    redflagsRoute.setResumeStorage(storage);
+  }
+}
 
 function err(code, message, details = {}) {
   return { error: { code, message, details } };

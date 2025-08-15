@@ -1,6 +1,23 @@
 import OpenAI, { toFile } from 'openai';
+import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+// In-memory storage for canonical resumes (replace with DB in production)
+const resumeStorage = new Map();
+
+// Export storage getter for other routes
+export function getResumeStorage() {
+  return resumeStorage;
+}
+
+// JSON schema validation
+const ResumeSchema = z.object({
+  name: z.string().nullable(),
+  email: z.string().nullable(),
+  text: z.string().min(1, "Text must not be empty")
+}).strict(); // No extra keys allowed
 
 export default async function uploadRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -26,54 +43,111 @@ export default async function uploadRoute(app) {
       const buf = await filePart.toBuffer();
       if (buf.length > MAX_BYTES) return reply.code(413).send(err('PAYLOAD_TOO_LARGE', 'File exceeds 10MB'));
 
+      // Generate unique resume ID
+      const resumeId = uuidv4();
+
+      // Upload file to OpenAI for AI to process
       const uploaded = await openai.files.create({
         file: await toFile(buf, filename || 'upload', { type: mimetype || 'application/octet-stream' }),
         purpose: 'assistants'
       });
 
-      const prompt = [
-        'You are a résumé parser. Read the attached file and OUTPUT ONLY valid JSON with this exact schema:',
-        '{ "name": string|null, "email": string|null, "blurb": string, "text": string }.',
-        'Rules for fields:',
-        '- name: best candidate full name if confidently found, else null. Do not invent.',
-        '- email: primary email if present, else null. Do not invent.',
-        '- blurb: a neutral 1–2 sentence objective summary of the candidate (no hype).',
-        '- text: faithful plain-text extraction of the document content. Do NOT summarize or paraphrase.',
-        'text extraction policy:',
-        '- Preserve original wording, punctuation, capitalization, numbers, names, dates.',
-        '- Allowed cleanup only: fix line-break hyphenation; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.',
-        'Output JSON only. No markdown. No extra keys. No comments.'
-      ].join(' ');
+      // Send to GPT-5-nano for text extraction and structured output
+      let prompt = `You are a résumé text extractor. Read the attached file and OUTPUT ONLY valid JSON with this exact schema:
+{
+  "name": string|null,
+  "email": string|null,
+  "text": string
+}
+Rules:
+- name: full candidate name if clearly stated; else null.
+- email: primary email if present; else null.
+- text: faithful plain-text extraction of the document content.
+Text extraction rules:
+- Preserve all wording, punctuation, capitalization, numbers, names, and dates.
+- Allowed cleanup: fix hyphenated line breaks; merge multi-column order; remove repeated headers/footers/page numbers; collapse excessive whitespace while keeping paragraph/list structure.
+- Do NOT summarize, paraphrase, or infer content.
+Output JSON only. No markdown, no extra keys, no comments.`;
 
-      const resp = await openai.responses.create({
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        input: [
-          {
-            role: 'user',
-            content: [
-              { type: 'input_text', text: prompt },
-              { type: 'input_file', file_id: uploaded.id }
+      let parsed;
+      let retryCount = 0;
+      const maxRetries = 1;
+
+      while (retryCount <= maxRetries) {
+                  try {
+            const resp = await openai.responses.create({
+              model: process.env.OPENAI_MODEL || 'gpt-5-nano',
+              input: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'input_text', text: prompt },
+                  { type: 'input_file', file_id: uploaded.id }
+                ]
+              }
             ]
+          });
+
+          const outputText = (resp.output_text || '').trim();
+          parsed = JSON.parse(outputText);
+          
+          // Validate against schema
+          const validated = ResumeSchema.parse(parsed);
+          parsed = validated;
+          break; // Success, exit retry loop
+          
+        } catch (parseError) {
+          retryCount++;
+          if (retryCount > maxRetries) {
+            throw new Error(`Failed to parse JSON after ${maxRetries + 1} attempts: ${parseError.message}`);
           }
-        ]
+          
+          // Retry with stricter prompt
+          prompt = `Your previous output failed validation. Return ONLY valid JSON matching the schema. No prose.`;
+        }
+      }
+
+      // Store canonical resume data (AI-extracted text)
+      const resumeData = {
+        resumeId,
+        name: parsed.name,
+        email: parsed.email,
+        canonicalText: parsed.text,
+        uploadedAt: Date.now()
+      };
+      
+      resumeStorage.set(resumeId, resumeData);
+
+      // Return response
+      return reply.send({
+        resumeId,
+        name: parsed.name,
+        email: parsed.email,
+        length: parsed.text.length
       });
 
-      const outputText = (resp.output_text || '').trim();
-      let parsed;
-      try {
-        parsed = JSON.parse(outputText);
-      } catch {
-        parsed = { name: null, email: null, blurb: '', text: outputText };
-      }
-      const name = typeof parsed.name === 'string' || parsed.name === null ? parsed.name : null;
-      const email = typeof parsed.email === 'string' || parsed.email === null ? parsed.email : null;
-      const blurb = typeof parsed.blurb === 'string' ? parsed.blurb : '';
-      const text = typeof parsed.text === 'string' ? parsed.text : '';
-      return reply.send({ fileId: uploaded.id, name, email, blurb, text });
     } catch (e) {
       req.log.error(e);
-      return reply.code(500).send(err('OPENAI_ERROR', 'Failed to process file with OpenAI', { hint: e.message }));
+      return reply.code(500).send(err('PROCESSING_ERROR', 'Failed to process resume', { hint: e.message }));
     }
+  });
+
+  // Helper endpoint to retrieve canonical text (for other micro-prompts)
+  app.get('/v1/resume/:resumeId', async (req, reply) => {
+    const { resumeId } = req.params;
+    const resumeData = resumeStorage.get(resumeId);
+    
+    if (!resumeData) {
+      return reply.code(404).send(err('NOT_FOUND', 'Resume not found'));
+    }
+    
+    return reply.send({
+      resumeId,
+      name: resumeData.name,
+      email: resumeData.email,
+      canonicalText: resumeData.canonicalText,
+      uploadedAt: resumeData.uploadedAt
+    });
   });
 }
 
