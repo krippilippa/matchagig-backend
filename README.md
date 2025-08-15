@@ -1,197 +1,307 @@
-## MatchaGig Backend API
+# MatchaGig Backend API
 
-Minimal Fastify backend for uploading résumés, having OpenAI clean/linearize text, and asking questions against the uploaded file.
+AI-powered résumé processing backend built with Fastify and OpenAI. Upload résumés once, get canonical text storage, and run intelligent parsing queries without re-uploading.
 
-### Base URL
-- Local dev: `http://localhost:8787`
+## 🚀 Features
 
-### Auth
-- None (dev). CORS is open. Put your OpenAI key in `.env`.
+- **Canonical Resume Storage**: Upload once, reuse forever
+- **AI-Powered Text Extraction**: Clean, normalized text from PDF/DOCX/TXT
+- **Intelligent Overview Generation**: 7 parallel micro-prompts for comprehensive data
+- **Persistent Storage**: Survives server restarts with file-based persistence
+- **Structured Data**: Zod-validated, consistent JSON responses
 
-### Environment
-- Required: `OPENAI_API_KEY`
-- Optional: `OPENAI_MODEL` (defaults to `gpt-4o-mini`), `PORT` (defaults to `8787`)
+## 🛠️ Setup
 
-### Start
+### Prerequisites
+- Node.js 18+
+- OpenAI API key
+
+### Installation
 ```bash
 npm ci
-cp ENV_EXAMPLE.txt .env  # then edit with your key
+cp ENV_EXAMPLE.txt .env  # Edit with your OpenAI key
 npm run dev
 ```
 
-### Error format
-All errors follow this shape:
-```json
-{ "error": { "code": "STRING", "message": "STRING", "details": { } } }
-```
-Common `code` values: `BAD_REQUEST`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `CONFIG`, `OPENAI_ERROR`, `INTERNAL`.
-
----
-
-## Endpoints
-
-### GET /health
-Quick health check.
-
-- Response 200:
-```json
-{ "ok": true, "ts": "2025-01-01T12:34:56.000Z" }
+### Environment Variables
+```bash
+OPENAI_API_KEY=your_openai_key_here
+OPENAI_MODEL=gpt-5-nano  # Optional, defaults to gpt-5-nano
+PORT=8787                 # Optional, defaults to 8787
 ```
 
----
+## 📡 API Endpoints
 
-### POST /v1/upload
-Upload a résumé (PDF/DOCX/TXT). The server uploads the file to OpenAI Files and asks the Responses API to return structured JSON with key fields and faithful full text. No local parsing.
+### Base URL
+- Local: `http://localhost:8787`
+- Production: `https://your-domain.com`
 
-- Content-Type: `multipart/form-data`
-- Form fields:
-  - `file`: the file to upload (.pdf, .docx, .txt). Max 10 MB.
-
-- Response 200:
+### Error Format
+All errors follow this structure:
 ```json
 {
-  "fileId": "file_abc123",
-  "name": "Jane Doe",
-  "email": "jane@example.com",
-  "blurb": "Full-stack engineer with 7+ years building SaaS and APIs in Node and React.",
-  "text": "...verbatim plain-text extraction of the document..."
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human readable message",
+    "details": {}
+  }
 }
 ```
-- Response 400:
+
+Common error codes: `BAD_REQUEST`, `NOT_FOUND`, `PROCESSING_ERROR`, `CONFIG`
+
+---
+
+## 🔄 Core Endpoints
+
+### POST /v1/upload
+Upload a résumé and get canonical storage with AI-extracted metadata.
+
+**Request:**
+- Content-Type: `multipart/form-data`
+- Body: `file` field with PDF/DOCX/TXT (max 10MB)
+
+**Response 200:**
 ```json
-{ "error": { "code": "BAD_REQUEST", "message": "No file provided", "details": {} } }
-```
-- Response 413:
-```json
-{ "error": { "code": "PAYLOAD_TOO_LARGE", "message": "File exceeds 10MB", "details": {} } }
-```
-- Response 415:
-```json
-{ "error": { "code": "UNSUPPORTED_MEDIA_TYPE", "message": "Use multipart/form-data", "details": {} } }
+{
+  "resumeId": "e29663e6-b34d-4f21-b147-b456d96d1d6c",
+  "name": "Ana Noguera",
+  "email": "anoguera2020@gmail.com",
+  "phone": "+34695511682",
+  "length": 7048
+}
 ```
 
-- cURL example:
+**cURL Example:**
 ```bash
 curl -F file=@/path/to/Resume.pdf http://localhost:8787/v1/upload
 ```
 
-Notes:
-- The returned `fileId` can be reused for later queries without re-uploading.
+**Notes:**
+- Returns a `resumeId` (UUID) for future queries
+- AI extracts and normalizes text automatically
+- Text is cleaned (hyphenation, whitespace, headers/footers removed)
+- Data persists across server restarts
+
+---
+
+### POST /v1/overview
+Generate comprehensive résumé overview using 7 parallel AI micro-prompts.
+
+**Request:**
+- Content-Type: `application/json`
+- Body: `{ "resumeId": "uuid-here" }`
+
+**Response 200:**
+```json
+{
+  "resumeId": "e29663e6-b34d-4f21-b147-b456d96d1d6c",
+  "name": "Ana Noguera",
+  "email": "anoguera2020@gmail.com",
+  "phone": "+34695511682",
+  "overview": {
+    "title": "HEAD OF SALES",
+    "seniorityHint": "Lead/Head",
+    "employer": "INFORCERT-TINEXTA GROUP",
+    "yoe": 20,
+    "yoeBasis": "self-reported",
+    "education": {
+      "level": "Master",
+      "degreeName": "MBA",
+      "field": "Business Administration",
+      "institution": "ESIC Business School",
+      "year": "2015"
+    },
+    "topAchievements": [
+      "Exceeded group sales targets Y-o-Y by generating annual revenue",
+      "Met sales target consistently by securing multi-year contracts",
+      "Annual growth achieved through strategic partnerships"
+    ],
+    "functions": ["Sales", "Business Development"],
+    "location": {
+      "city": null,
+      "country": null
+    },
+    "employerRaw": "INFORCERT-TINEXTA GROUP",
+    "employerDescriptor": null
+  },
+  "metadata": {
+    "promptVersion": "v1",
+    "canonicalTextLength": 7045,
+    "timestamp": "2025-08-15T10:16:52.379Z"
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:8787/v1/overview \
+  -H "Content-Type: application/json" \
+  -d '{"resumeId": "e29663e6-b34d-4f21-b147-b456d96d1d6c"}'
+```
+
+**Overview Fields Explained:**
+- **title**: Current job title (exact wording)
+- **seniorityHint**: Junior/Mid/Senior/Lead/Head/Unknown
+- **employer**: Clean organization name (no dates/locations)
+- **yoe**: Years of experience (self-reported preferred, date-derived fallback)
+- **yoeBasis**: Source of YOE data
+- **education**: Highest completed education level
+- **topAchievements**: 3 outcome-focused achievements (no duties)
+- **functions**: 1-2 broad professional domains (Title Case)
+- **location**: City/country if stated
+- **employerRaw**: Full employer string as written
+- **employerDescriptor**: Tagline/sector info only (no dates/remote)
 
 ---
 
 ### POST /v1/query
-Ask a question against a previously uploaded file.
+Ask custom questions against a stored résumé.
 
+**Request:**
 - Content-Type: `application/json`
-- Body:
-```json
-{ "fileId": "file_abc123", "question": "Give a 5-line brief..." }
-```
-- Response 200:
-```json
-{ "text": "...answer based on the uploaded résumé..." }
-```
-- Response 400:
-```json
-{ "error": { "code": "BAD_REQUEST", "message": "Required: { fileId, question }", "details": {} } }
-```
+- Body: `{ "resumeId": "uuid", "question": "Your question here" }`
 
-- cURL example:
-```bash
-curl -X POST http://localhost:8787/v1/query \
-  -H 'Content-Type: application/json' \
-  -d '{"fileId":"file_abc123","question":"Give a 5-line brief..."}'
-```
-
----
-
-### POST /v1/summary
-Extract objective résumé data in structured JSON.
-
-- Content-Type: `application/json`
-- Body: provide either `fileId` or `text` (not both)
-```json
-{ "fileId": "file_abc123" }
-```
-or
-```json
-{ "text": "...resume plain text..." }
-```
-- Response 200:
+**Response 200:**
 ```json
 {
-  "jobsCount": 5,
-  "yearsExperience": 8,
-  "companies": ["Acme Inc", "Globex"],
-  "roles": ["Senior Software Engineer", "Team Lead"],
-  "education": [
-    { "degree": "B.Sc.", "field": "Computer Science", "institution": "University X", "year": "2016" }
-  ],
-  "hardSkills": ["JavaScript", "React", "Node.js", "PostgreSQL"],
-  "softSkills": ["Leadership", "Collaboration", "Communication"]
+  "resumeId": "e29663e6-b34d-4f21-b147-b456d96d1d6c",
+  "question": "What are the candidate's key strengths?",
+  "text": "AI-generated answer based on the résumé content...",
+  "textLength": 245
 }
 ```
-- Response 400:
-```json
-{ "error": { "code": "BAD_REQUEST", "message": "Provide either fileId OR text, not both", "details": {} } }
-```
 
-- cURL examples:
+**cURL Example:**
 ```bash
-curl -X POST http://localhost:8787/v1/summary \
-  -H 'Content-Type: application/json' \
-  -d '{"fileId":"file_abc123"}'
-
-curl -X POST http://localhost:8787/v1/summary \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"...resume text..."}'
+curl -X POST http://localhost:8787/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"resumeId": "uuid-here", "question": "What are the key strengths?"}'
 ```
-
-
-## Integration Notes
- - CORS is open in dev. You can call from the browser directly during prototyping.
- - Expect Responses API calls to take a few seconds for large files.
- - If port 8787 is busy, set `PORT` in `.env`.
- - Returned `fileId` is stable and can be stored for future queries.
 
 ---
 
-### POST /v1/redflags
-Scan a résumé for objective red flags. Returns JSON with up to 5 items; empty list means no major red flags.
+### GET /v1/resume/:resumeId
+Retrieve stored résumé data and canonical text.
 
-- Content-Type: `application/json`
-- Body: provide either `fileId` or `text` (not both)
+**Response 200:**
 ```json
-{ "fileId": "file_abc123" }
-```
-or
-```json
-{ "text": "...resume plain text..." }
-```
-- Response 200 (examples):
-```json
-{ "items": [
-  { "title": "Employment gap", "description": "9-month gap between Jan 2020 and Oct 2020." },
-  { "title": "Overclaiming skills", "description": "Lists 35+ disparate tools with no matching roles or timelines." }
-] }
-```
-No flags:
-```json
-{ "items": [] }
-```
-- Response 400:
-```json
-{ "error": { "code": "BAD_REQUEST", "message": "Provide either fileId OR text, not both", "details": {} } }
+{
+  "resumeId": "e29663e6-b34d-4f21-b147-b456d96d1d6c",
+  "name": "Ana Noguera",
+  "email": "anoguera2020@gmail.com",
+  "phone": "+34695511682",
+  "canonicalText": "Cleaned, normalized résumé text...",
+  "uploadedAt": 1692180000000
+}
 ```
 
-- cURL examples:
+---
+
+## 🔧 Technical Details
+
+### AI Models Used
+- **Upload**: `gpt-5-nano` for text extraction and metadata parsing
+- **Overview**: `gpt-5-nano` for 7 parallel micro-prompts
+- **Query**: `gpt-5-nano` for custom questions
+
+### Data Persistence
+- **In-memory**: Fast access during runtime
+- **File-based**: `resume-storage.json` for persistence across restarts
+- **Auto-save**: Every upload automatically persists to disk
+- **Auto-load**: Server automatically loads existing data on startup
+
+### Text Processing Pipeline
+1. **AI Extraction**: OpenAI extracts text from PDF/DOCX/TXT
+2. **Normalization**: Fixes hyphenation, whitespace, headers/footers
+3. **Canonical Storage**: Single source of truth for all queries
+4. **Micro-prompts**: Targeted AI analysis for specific data points
+
+### Micro-Prompts (Overview System)
+1. **Current Title**: Job title + seniority hint
+2. **Current Employer**: Organization name + descriptor
+3. **YOE Estimate**: Self-reported + date-derived values
+4. **Education**: Highest completed level + details
+5. **Achievements**: Outcome-focused accomplishments
+6. **Functions**: Broad professional domains
+7. **Location**: City/country if stated
+
+---
+
+## 🚦 Integration Notes
+
+### Frontend Integration
+- **Upload Flow**: Upload → get `resumeId` → store for future use
+- **Overview Flow**: Use `resumeId` → get comprehensive structured data
+- **Query Flow**: Use `resumeId` → ask custom questions
+- **Error Handling**: Check `error.code` for specific error types
+
+### Performance
+- **Upload**: 5-15 seconds (depends on file size and AI processing)
+- **Overview**: 3-8 seconds (7 parallel AI calls)
+- **Query**: 2-5 seconds (single AI call)
+- **Storage**: Instant (in-memory with disk persistence)
+
+### CORS
+- **Development**: Open CORS for local development
+- **Production**: Configure CORS for your frontend domain
+
+### Rate Limiting
+- **Development**: None
+- **Production**: Implement rate limiting based on your needs
+
+---
+
+## 📊 Example Workflows
+
+### 1. Resume Processing Pipeline
 ```bash
-curl -X POST http://localhost:8787/v1/redflags \
-  -H 'Content-Type: application/json' \
-  -d '{"fileId":"file_abc123"}'
+# 1. Upload resume
+curl -F file=@resume.pdf http://localhost:8787/v1/upload
+# Returns: { "resumeId": "uuid", "name": "...", ... }
 
-curl -X POST http://localhost:8787/v1/redflags \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"...resume text..."}'
+# 2. Generate overview
+curl -X POST http://localhost:8787/v1/overview \
+  -d '{"resumeId": "uuid"}'
+# Returns: comprehensive structured data
+
+# 3. Ask custom questions
+curl -X POST http://localhost:8787/v1/query \
+  -d '{"resumeId": "uuid", "question": "What are the key achievements?"}'
 ```
+
+### 2. Batch Processing
+```bash
+# Upload multiple resumes
+for file in resumes/*.pdf; do
+  curl -F file=@$file http://localhost:8787/v1/upload
+done
+
+# Process all stored resumes
+curl -X POST http://localhost:8787/v1/overview \
+  -d '{"resumeId": "stored-uuid-1"}'
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+- **"Resume not found"**: Upload the resume first, then use the returned `resumeId`
+- **Processing errors**: Check OpenAI API key and model availability
+- **Storage persistence**: Ensure write permissions for `resume-storage.json`
+
+### Debug Information
+- Check server logs for detailed error messages
+- Verify OpenAI API key is valid and has credits
+- Confirm file uploads are under 10MB limit
+
+---
+
+## 🔮 Future Enhancements
+
+- **Database Integration**: Replace file storage with PostgreSQL/MongoDB
+- **Batch Processing**: Process multiple resumes simultaneously
+- **Advanced Analytics**: Skills matching, job fit scoring
+- **Webhook Support**: Notify frontend of processing completion
+- **Caching Layer**: Redis for improved performance
