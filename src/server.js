@@ -23,7 +23,10 @@ await app.register(multipart, {
 
 app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 
-// Register routes
+// Create shared resume storage instance
+const sharedResumeStorage = new Map();
+
+// Register routes with shared storage
 await app.register(uploadRoute);
 await app.register(queryRoute);
 await app.register(summaryRoute);
@@ -32,21 +35,22 @@ await app.register(overviewRoute);
 
 // Share resume storage between routes (temporary solution - replace with proper DB in production)
 // This ensures all routes can access the canonical resume data
-if (typeof uploadRoute.getResumeStorage === 'function') {
-  // Get the storage from upload route and share it
-  const storage = uploadRoute.getResumeStorage?.() || new Map();
-  if (typeof queryRoute.setResumeStorage === 'function') {
-    queryRoute.setResumeStorage(storage);
-  }
-  if (typeof summaryRoute.setResumeStorage === 'function') {
-    summaryRoute.setResumeStorage(storage);
-  }
-  if (typeof redflagsRoute.setResumeStorage === 'function') {
-    redflagsRoute.setResumeStorage(storage);
-  }
-  if (typeof overviewRoute.setResumeStorage === 'function') {
-    overviewRoute.setResumeStorage(storage);
-  }
+if (typeof queryRoute.setResumeStorage === 'function') {
+  queryRoute.setResumeStorage(sharedResumeStorage);
+}
+if (typeof summaryRoute.setResumeStorage === 'function') {
+  summaryRoute.setResumeStorage(sharedResumeStorage);
+}
+if (typeof redflagsRoute.setResumeStorage === 'function') {
+  redflagsRoute.setResumeStorage(sharedResumeStorage);
+}
+if (typeof overviewRoute.setResumeStorage === 'function') {
+  overviewRoute.setResumeStorage(sharedResumeStorage);
+}
+
+// Set the storage in upload route so it can populate the shared instance
+if (typeof uploadRoute.setResumeStorage === 'function') {
+  uploadRoute.setResumeStorage(sharedResumeStorage);
 }
 
 function err(code, message, details = {}) {

@@ -5,11 +5,16 @@ import { z } from 'zod';
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
 // In-memory storage for canonical resumes (replace with DB in production)
-const resumeStorage = new Map();
+let resumeStorage = new Map();
 
 // Export storage getter for other routes
 export function getResumeStorage() {
   return resumeStorage;
+}
+
+// Export storage setter for server to inject shared storage
+export function setResumeStorage(storage) {
+  resumeStorage = storage;
 }
 
 // JSON schema validation
