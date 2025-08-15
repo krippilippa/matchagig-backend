@@ -19,8 +19,8 @@ function topSnippet(text) {
 // Clean employer name for display (remove trailing descriptors)
 function displayEmployer(raw) {
   if (!raw) return raw;
-  const cut = raw.split(/[:–—-]\s/)[0]; // conservative split
-  return cut.length >= 3 ? cut : raw;
+  const m = raw.match(/^(.+?)(?:[:–—]\s+)(.+)$/); // no simple hyphen '-'
+  return m ? m[1].trim() : raw;
 }
 
 // The 7 micro-prompts with their schemas
@@ -229,10 +229,14 @@ const VALIDATORS = {
   location_simple: assertShape_locationSimple
 };
 
-// Run a single micro-prompt with retry logic
+// Run a single micro-prompt with retry logic and capability negotiation
 async function runMicroPrompt(openai, basePrompt, canonicalText, promptKey, maxRetries = 1) {
   const userMsg = basePrompt.replace('<<<CANONICAL_TEXT>>>', canonicalText);
-  
+
+  // Try capabilities in descending order; fall back if the model rejects a param.
+  let tryResponseFormat = true;
+  let tryTemperature = false; // default OFF for gpt-5-nano to avoid API errors
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const messages = [
@@ -244,13 +248,16 @@ async function runMicroPrompt(openai, basePrompt, canonicalText, promptKey, maxR
       if (attempt > 0) {
         messages.push({ role: 'user', content: RETRY_MESSAGE });
       }
-      
-      const resp = await openai.responses.create({
-        model: process.env.OPENAI_MODEL || 'gpt-5-nano',
-        temperature: 0.1,
-        input: messages
-      });
 
+      const req = {
+        model: process.env.OPENAI_MODEL || 'gpt-5-nano',
+        input: messages,
+      };
+
+      if (tryTemperature) req.temperature = 0.1;           // only if enabled
+      if (tryResponseFormat) req.response_format = { type: 'json_object' };
+
+      const resp = await openai.responses.create(req);
       const outputText = (resp.output_text || '').trim();
       const parsed = JSON.parse(outputText);
       
@@ -268,13 +275,26 @@ async function runMicroPrompt(openai, basePrompt, canonicalText, promptKey, maxR
       return { success: true, data: parsed };
       
     } catch (error) {
+      // Handle unsupported parameter fallbacks based on error message
+      const msg = String(error?.message || error);
+      if (/Unsupported parameter/i.test(msg)) {
+        if (/response_format/i.test(msg) && tryResponseFormat) {
+          tryResponseFormat = false;           // retry without response_format
+          continue;
+        }
+        if (/temperature/i.test(msg) && tryTemperature) {
+          tryTemperature = false;              // retry without temperature
+          continue;
+        }
+      }
+      
       if (attempt === maxRetries) {
         return { 
           success: false, 
-          error: `Failed after ${maxRetries + 1} attempts: ${error.message}` 
+          error: `Failed after ${maxRetries + 1} attempts: ${msg}` 
         };
       }
-      // Continue to retry - don't modify the base prompt
+      // otherwise, loop and retry with same prompt (we already append RETRY_MESSAGE on attempt>0)
     }
   }
 }
