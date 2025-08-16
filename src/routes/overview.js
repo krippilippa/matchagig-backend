@@ -33,108 +33,8 @@ function normalizePublicLinks(links) {
   return links;
 }
 
-// The 13 micro-prompts with their schemas
+// The 7 micro-prompts with their schemas
 const MICRO_PROMPTS = {
-  current_title: {
-    prompt: `From the résumé text below, return the current or most recent job title.
-
-Schema:
-{ "currentTitle": string|null, "seniorityHint": "Junior"|"Mid"|"Senior"|"Lead/Head"|"Unknown"|null }
-
-Rules:
-- currentTitle = title of the most recent position listed OR the one marked "Present", "to date", or similar.
-- Copy the title exactly as written (keep casing and punctuation).
-- seniorityHint: best single-word guess based on the title wording ONLY (no date math). If unclear, "Unknown".
-- If no title is clearly identifiable, set both fields to null.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      currentTitle: 'string|null',
-      seniorityHint: '"Junior"|"Mid"|"Senior"|"Lead/Head"|"Unknown"|null'
-    }
-  },
-
-  current_employer: {
-    prompt: `From the résumé text below, return the current or most recent employer split into three fields.
-
-Schema:
-{
-  "employerRaw": string|null,
-  "employerName": string|null,
-  "employerDescriptor": string|null
-}
-
-Rules:
-- Identify the employer for the most recent role (or the one marked "Present"/"to date").
-- employerRaw: the organization name ONLY as it appears in the résumé (no job title, no dates, no work mode, no location, no separators like "|" or "–" content that follows).
-- If the organization name appears on the same line as other info (e.g., job title, dates, locations, work mode), select only the organization name portion and exclude the rest.
-- employerName: same value as employerRaw (organization name only).
-- employerDescriptor: if a brief tagline/sector/descriptor immediately follows the organization name after a separator (e.g., ":", "–", "—"), return that descriptor; do NOT include dates, locations, or work mode notes in employerDescriptor.
-- If you cannot confidently split, set employerName = employerRaw and employerDescriptor = null.
-- Use exact wording from the résumé; do not normalize or translate.
-- JSON only.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      employerRaw: 'string|null',
-      employerName: 'string|null',
-      employerDescriptor: 'string|null'
-    }
-  },
-
-  total_yoe_estimate: {
-    prompt: `From the résumé text below, estimate total years of professional experience. Return BOTH a self-reported value (if any wording like "X years" appears) AND a date-derived value (rough estimate from role dates or tenure clues). Do not output ranges; use a single numeric estimate for each. If either cannot be determined, set it to null.
-
-Schema:
-{
-  "selfReportedYears": number|null,
-  "dateDerivedYears": number|null
-}
-
-Rules:
-- selfReportedYears: only when the résumé literally states total years (e.g., "over 10 years"); convert to a single number (e.g., "over 10 years" → 10).
-- dateDerivedYears: best-effort single numeric estimate from the document's role/tenure cues.
-- Do not include text explanations. JSON only.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      selfReportedYears: 'number|null',
-      dateDerivedYears: 'number|null'
-    }
-  },
-
-  highest_education: {
-    prompt: `From the résumé text below, return the highest completed education.
-
-Schema:
-{
-  "level": "PhD/Doctorate"|"Master"|"Bachelor"|"Associate"|"Diploma/Certificate"|"High School"|"Unknown"|null,
-  "degreeName": string|null,
-  "field": string|null,
-  "institution": string|null,
-  "year": string|null
-}
-
-Rules:
-- Identify the single highest level completed; if unclear, "Unknown".
-- Copy degreeName/field/institution/year as written when available.
-- If multiple items tie at the same level, choose the most recent.
-- Unknown parts → null.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      level: '"PhD/Doctorate"|"Master"|"Bachelor"|"Associate"|"Diploma/Certificate"|"High School"|"Unknown"|null',
-      degreeName: 'string|null',
-      field: 'string|null',
-      institution: 'string|null',
-      year: 'string|null'
-    }
-  },
-
   top3_achievements: {
     prompt: `Identify up to three achievements from the résumé.
 
@@ -160,88 +60,6 @@ Text:
     }
   },
 
-  primary_functions: {
-    prompt: `From the résumé text below, return the candidate's primary professional function(s).
-
-Schema:
-{ "functions": string[] }   // up to 2 items, e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"
-
-Rules:
-- Return 1–2 broad professional domains that best represent the candidate's core work across roles.
-- Use generic domain labels only (no tools, no industries, no company-specific terms).
-- Capitalize each item in Title Case.
-- If unclear, return [].
-- JSON only.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: { functions: 'string[]' }
-  },
-
-  location_simple: {
-    prompt: `From the résumé text below, return the most current or primary location.
-
-Schema:
-{ "city": string|null, "country": string|null }
-
-Rules:
-- Copy city and country as written if present.
-- If only one is available, return the one you have and null for the other.
-- Do not infer or guess; if unclear, return nulls.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: { city: 'string|null', country: 'string|null' }
-  },
-
-  languages: {
-    prompt: `From the résumé text below, extract languages and proficiency.
-
-Schema:
-{ "languages": [ { "name": string, "proficiency": "Native"|"C2"|"C1"|"B2"|"B1"|"A2"|"A1"|"Unknown" } ] }
-
-Rules:
-- Detect languages explicitly mentioned (e.g., "English – fluent", "Swedish (native)", "French: B2").
-- Map wording to CEFR where possible:
-  • native/mother tongue → Native
-  • fluent/professional/full professional → C1
-  • advanced/upper-intermediate → C1 or B2 (choose best single)
-  • intermediate → B1
-  • elementary/basic → A2 or A1 (choose best single)
-  • if CEFR given (A1–C2), use it directly
-- Keep 1 entry per language; choose the strongest level if multiple.
-- If no languages found, return { "languages": [] }.
-- Output one single minified JSON object. No markdown, no backticks, no comments.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      languages: [{ name: 'string', proficiency: '"Native"|"C2"|"C1"|"B2"|"B1"|"A2"|"A1"|"Unknown"' }]
-    }
-  },
-
-  availability: {
-    prompt: `From the résumé text below, extract candidate availability.
-
-Schema:
-{ "availability": "Immediate"|"Notice"|"Unknown", "noticeDays": number|null }
-
-Rules:
-- If the text states "immediately available", "available now/ASAP" → availability = "Immediate", noticeDays = null.
-- If a notice period is stated (e.g., "2 weeks", "1 month", "30 days"): availability = "Notice" and noticeDays = total days (weeks×7, months≈30).
-- If only "available from <month/year or date>" is given and no notice wording → availability = "Notice" and noticeDays = null.
-- If nothing is stated → availability = "Unknown", noticeDays = null.
-- Do not infer from employment dates alone.
-- Output one single minified JSON object. No markdown, no backticks, no comments.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      availability: '"Immediate"|"Notice"|"Unknown"',
-      noticeDays: 'number|null'
-    }
-  },
-
   top_hard_skills: {
     prompt: `From the résumé text below, extract the top hard skills/tools (normalized).
 
@@ -258,28 +76,6 @@ Rules:
 Text:
 <<<CANONICAL_TEXT>>>`,
     schema: { skills: 'string[]' }
-  },
-
-  certifications: {
-    prompt: `From the résumé text below, extract professional certifications or licenses.
-
-Schema:
-{ "certifications": [ { "name": string, "issuer": string|null, "year": string|null } ] }
-
-Rules:
-- Include certificates, licenses, and standardized credentials (e.g., "PMP", "AWS Certified Solutions Architect", "CPA", "Six Sigma Green Belt").
-- If issuer is mentioned (organization, vendor, association), include it verbatim; otherwise null.
-- Year can be completion or most recent renewal year if explicitly present; otherwise null.
-- Do not include courses without a credential, awards, or degrees.
-- Deduplicate exact duplicates.
-- If none found, return { "certifications": [] }.
-- Output one single minified JSON object. No markdown, no backticks, no comments.
-
-Text:
-<<<CANONICAL_TEXT>>>`,
-    schema: {
-      certifications: [{ name: 'string', issuer: 'string|null', year: 'string|null' }]
-    }
   },
 
   leadership_summary: {
@@ -302,135 +98,180 @@ Text:
     }
   },
 
-  public_links: {
-    prompt: `From the résumé text below, extract public profile/portfolio links.
+  // merged prompts below
+  // Merged: current_title + current_employer + location_simple
+  role_header: {
+    prompt: `Extract current role and location from the résumé text.
 
 Schema:
 {
-  "links": {
-    "linkedin": string|null,
-    "github": string|null,
-    "website": string|null,
-    "portfolio": string|null,
-    "behance": string|null,
-    "dribbble": string|null,
-    "x": string|null
-  }
+  "currentTitle": string|null,
+  "seniorityHint": "Junior"|"Mid"|"Senior"|"Lead/Head"|"Unknown"|null,
+  "employerRaw": string|null,
+  "employerName": string|null,
+  "employerDescriptor": string|null,
+  "location": { "city": string|null, "country": string|null }
 }
 
 Rules:
-- Return fully qualified URLs when present (beginning with http or https). If protocol is missing but domain is obvious (e.g., "linkedin.com/in/..."), prepend "https://".
-- If multiple links of the same type exist, choose the most complete profile URL (not a post).
-- "website" = personal/company site if clearly the candidate's.
-- "portfolio" = general portfolio link if not specifically Behance/Dribbble.
-- "x" = Twitter/X profile only (not individual tweets).
-- If a type is absent, return null.
-- Output one single minified JSON object. No markdown, no backticks, no comments.
+- currentTitle/employer = most recent or marked "Present/to date".
+- Copy exact wording; no normalization/translation.
+- location: prefer header; else current role line; else nulls.
+- Output one single minified JSON object. No markdown/backticks.
 
 Text:
 <<<CANONICAL_TEXT>>>`,
     schema: {
+      currentTitle: 'string|null',
+      seniorityHint: '"Junior"|"Mid"|"Senior"|"Lead/Head"|"Unknown"|null',
+      employerRaw: 'string|null',
+      employerName: 'string|null',
+      employerDescriptor: 'string|null',
+      location: { city: 'string|null', country: 'string|null' }
+    }
+  },
+
+  // Merged: total_yoe_estimate + primary_functions
+  experience_signals: {
+    prompt: `Extract experience signals.
+
+Schema:
+{
+  "selfReportedYears": number|null,
+  "dateDerivedYears": number|null,
+  "functions": string[]
+}
+
+Rules:
+- selfReportedYears only if literally stated ("X years").
+- dateDerivedYears = rough single number from dates/tenure cues.
+- functions: 1–2 generic domains (e.g., "Sales","Marketing","HR","Product","Engineering","Customer Success"). Title Case.
+- Output one single minified JSON object. No markdown/backticks.
+
+Text:
+<<<CANONICAL_TEXT>>>`,
+    schema: {
+      selfReportedYears: 'number|null',
+      dateDerivedYears: 'number|null',
+      functions: 'string[]'
+    }
+  },
+
+  // Merged: languages + availability + public_links
+  profile_extras: {
+    prompt: `Extract languages, availability, and public links.
+
+Schema:
+{
+  "languages": [ { "name": string, "proficiency": "Native"|"C2"|"C1"|"B2"|"B1"|"A2"|"A1"|"Unknown" } ],
+  "availability": { "availability": "Immediate"|"Notice"|"Unknown", "noticeDays": number|null },
+  "links": { "linkedin": string|null, "github": string|null, "website": string|null, "portfolio": string|null, "behance": string|null, "dribbble": string|null, "x": string|null }
+}
+
+Rules:
+- Map language wording to CEFR when possible; else Unknown.
+- Availability: see/convert notice period; else Unknown.
+- Links: return full URLs; prepend https:// if protocol missing.
+- Output one single minified JSON object. No markdown/backticks.
+
+Text:
+<<<CANONICAL_TEXT>>>`,
+    schema: {
+      languages: [{ name: 'string', proficiency: '"Native"|"C2"|"C1"|"B2"|"B1"|"A2"|"A1"|"Unknown"' }],
+      availability: { availability: '"Immediate"|"Notice"|"Unknown"', noticeDays: 'number|null' },
       links: {
-        linkedin: 'string|null',
-        github: 'string|null',
-        website: 'string|null',
-        portfolio: 'string|null',
-        behance: 'string|null',
-        dribbble: 'string|null',
-        x: 'string|null'
+        linkedin: 'string|null', github: 'string|null', website: 'string|null',
+        portfolio: 'string|null', behance: 'string|null', dribbble: 'string|null', x: 'string|null'
       }
+    }
+  },
+
+  // Merged: highest_education + certifications
+  credentials: {
+    prompt: `Extract highest education and certifications/licenses.
+
+Schema:
+{
+  "education": { "level": "PhD/Doctorate"|"Master"|"Bachelor"|"Associate"|"Diploma/Certificate"|"High School"|"Unknown"|null, "degreeName": string|null, "field": string|null, "institution": string|null, "year": string|null },
+  "certifications": [ { "name": string, "issuer": string|null, "year": string|null } ]
+}
+
+Rules:
+- Choose a single highest completed level; unknown parts → null.
+- Certifications: real credentials only; dedupe exact duplicates.
+- Output one single minified JSON object. No markdown/backticks.
+
+Text:
+<<<CANONICAL_TEXT>>>`,
+    schema: {
+      education: {
+        level: '"PhD/Doctorate"|"Master"|"Bachelor"|"Associate"|"Diploma/Certificate"|"High School"|"Unknown"|null',
+        degreeName: 'string|null', field: 'string|null', institution: 'string|null', year: 'string|null'
+      },
+      certifications: [{ name: 'string', issuer: 'string|null', year: 'string|null' }]
     }
   }
 };
 
 // Per-prompt schema validation functions
-function assertShape_currentTitle(x) {
-  return x && (typeof x.currentTitle === 'string' || x.currentTitle === null)
-      && (['Junior', 'Mid', 'Senior', 'Lead/Head', 'Unknown', null].includes(x.seniorityHint));
-}
-
-function assertShape_currentEmployer(x) {
-  return x
-    && (typeof x.employerRaw === 'string' || x.employerRaw === null)
-    && (typeof x.employerName === 'string' || x.employerName === null)
-    && (typeof x.employerDescriptor === 'string' || x.employerDescriptor === null);
-}
-
-function assertShape_totalYoeEstimate(x) {
-  return x
-    && (typeof x.selfReportedYears === 'number' || x.selfReportedYears === null)
-    && (typeof x.dateDerivedYears === 'number' || x.dateDerivedYears === null);
-}
-
-function assertShape_highestEducation(x) {
-  return x && (['PhD/Doctorate', 'Master', 'Bachelor', 'Associate', 'Diploma/Certificate', 'High School', 'Unknown', null].includes(x.level))
-      && (typeof x.degreeName === 'string' || x.degreeName === null)
-      && (typeof x.field === 'string' || x.field === null)
-      && (typeof x.institution === 'string' || x.institution === null)
-      && (typeof x.year === 'string' || x.year === null);
-}
-
 function assertShape_top3Achievements(x) {
-  return x && Array.isArray(x.achievements) &&
-    x.achievements.every(a => typeof a.text === 'string');
-}
-
-function assertShape_primaryFunctions(x) {
-  return x && Array.isArray(x.functions) && x.functions.every(f => typeof f === 'string');
-}
-
-function assertShape_locationSimple(x) {
-  return x && (typeof x.city === 'string' || x.city === null)
-      && (typeof x.country === 'string' || x.country === null);
-}
-
-function assertShape_languages(x) {
-  return x && Array.isArray(x.languages) && x.languages.every(l =>
-    typeof l.name === 'string' && (['Native', 'C2', 'C1', 'B2', 'B1', 'A2', 'A1', 'Unknown'].includes(l.proficiency))
-  );
-}
-
-function assertShape_availability(x) {
-  return x && (['Immediate', 'Notice', 'Unknown'].includes(x.availability)) &&
-    (typeof x.noticeDays === 'number' || x.noticeDays === null);
+  return x && Array.isArray(x.achievements) && x.achievements.every(a => typeof a.text === 'string');
 }
 
 function assertShape_topHardSkills(x) {
   return x && Array.isArray(x.skills) && x.skills.every(s => typeof s === 'string');
 }
 
-function assertShape_certifications(x) {
-  return x && Array.isArray(x.certifications) && x.certifications.every(c =>
-    typeof c.name === 'string' && (typeof c.issuer === 'string' || c.issuer === null) && (typeof c.year === 'string' || c.year === null)
-  );
-}
-
 function assertShape_leadershipSummary(x) {
   return x && (typeof x.peopleManagedMax === 'number' || x.peopleManagedMax === null) && (typeof x.hiringExperience === 'boolean');
 }
 
-function assertShape_publicLinks(x) {
-  const p = x && x.links;
-  if (!p || typeof p !== 'object') return false;
+// Validators for merged prompts
+function assertShape_roleHeader(x) {
+  return x && (typeof x.currentTitle === 'string' || x.currentTitle === null)
+    && (["Junior", "Mid", "Senior", "Lead/Head", "Unknown", null].includes(x.seniorityHint))
+    && (typeof x.employerRaw === 'string' || x.employerRaw === null)
+    && (typeof x.employerName === 'string' || x.employerName === null)
+    && (typeof x.employerDescriptor === 'string' || x.employerDescriptor === null)
+    && x.location && (typeof x.location.city === 'string' || x.location.city === null)
+    && (typeof x.location.country === 'string' || x.location.country === null);
+}
+
+function assertShape_experienceSignals(x) {
+  return x && (typeof x.selfReportedYears === 'number' || x.selfReportedYears === null)
+    && (typeof x.dateDerivedYears === 'number' || x.dateDerivedYears === null)
+    && Array.isArray(x.functions) && x.functions.every(s => typeof s === 'string');
+}
+
+function assertShape_profileExtras(x) {
+  const okLanguages = Array.isArray(x.languages) && x.languages.every(l => typeof l.name === 'string' && ["Native","C2","C1","B2","B1","A2","A1","Unknown"].includes(l.proficiency));
+  const okAvailability = x.availability && (["Immediate","Notice","Unknown"].includes(x.availability.availability)) && (typeof x.availability.noticeDays === 'number' || x.availability.noticeDays === null);
+  const p = x.links;
   const keys = ["linkedin","github","website","portfolio","behance","dribbble","x"];
-  return keys.every(k => typeof p[k] === 'string' || p[k] === null);
+  const okLinks = p && typeof p === 'object' && keys.every(k => typeof p[k] === 'string' || p[k] === null);
+  return okLanguages && okAvailability && okLinks;
+}
+
+function assertShape_credentials(x) {
+  const e = x && x.education;
+  const okEdu = e && (["PhD/Doctorate","Master","Bachelor","Associate","Diploma/Certificate","High School","Unknown", null].includes(e.level))
+    && (typeof e.degreeName === 'string' || e.degreeName === null)
+    && (typeof e.field === 'string' || e.field === null)
+    && (typeof e.institution === 'string' || e.institution === null)
+    && (typeof e.year === 'string' || e.year === null);
+  const okCerts = Array.isArray(x.certifications) && x.certifications.every(c => typeof c.name === 'string' && (typeof c.issuer === 'string' || c.issuer === null) && (typeof c.year === 'string' || c.year === null));
+  return okEdu && okCerts;
 }
 
 // Validation mapping
 const VALIDATORS = {
-  current_title: assertShape_currentTitle,
-  current_employer: assertShape_currentEmployer,
-  total_yoe_estimate: assertShape_totalYoeEstimate,
-  highest_education: assertShape_highestEducation,
   top3_achievements: assertShape_top3Achievements,
-  primary_functions: assertShape_primaryFunctions,
-  location_simple: assertShape_locationSimple,
-  languages: assertShape_languages,
-  availability: assertShape_availability,
   top_hard_skills: assertShape_topHardSkills,
-  certifications: assertShape_certifications,
   leadership_summary: assertShape_leadershipSummary,
-  public_links: assertShape_publicLinks
+  role_header: assertShape_roleHeader,
+  experience_signals: assertShape_experienceSignals,
+  profile_extras: assertShape_profileExtras,
+  credentials: assertShape_credentials
 };
 
 // Run a single micro-prompt with retry logic and capability negotiation
@@ -532,7 +373,7 @@ export default async function overviewRoute(app) {
 
       const { canonicalText, name, email, phone } = resumeData;
       
-      // Run all 13 micro-prompts in parallel with full resume text for maximum accuracy
+      // Run all 7 micro-prompts in parallel with full resume text for maximum accuracy
       const promptPromises = Object.entries(MICRO_PROMPTS).map(async ([key, config]) => {
         // Send full resume text to every microprompt for best results
         const result = await runMicroPrompt(openai, config.prompt, canonicalText, key);
@@ -568,39 +409,39 @@ export default async function overviewRoute(app) {
         }
       });
 
-      // Build compact overview payload
+      // Build compact overview payload (using merged prompts only)
       const overview = {
-        title: answers.current_title?.currentTitle || null,
-        seniorityHint: answers.current_title?.seniorityHint || null,
-        employer: displayEmployer(answers.current_employer?.employerName || null),
-        yoe: (answers.total_yoe_estimate?.selfReportedYears ?? answers.total_yoe_estimate?.dateDerivedYears ?? null),
-        yoeBasis: (answers.total_yoe_estimate?.selfReportedYears != null ? 'self-reported' : (answers.total_yoe_estimate?.dateDerivedYears != null ? 'date-derived' : null)),
-        education: answers.highest_education || null,
+        title: answers.role_header?.currentTitle ?? null,
+        seniorityHint: answers.role_header?.seniorityHint ?? null,
+        employer: displayEmployer(answers.role_header?.employerName || null),
+        yoe: (answers.experience_signals?.selfReportedYears ?? answers.experience_signals?.dateDerivedYears ?? null),
+        yoeBasis: (answers.experience_signals?.selfReportedYears != null ? 'self-reported' : (answers.experience_signals?.dateDerivedYears != null ? 'date-derived' : null)),
+        education: answers.credentials?.education || null,
         topAchievements: answers.top3_achievements?.achievements || [],
-        functions: answers.primary_functions?.functions || [],
+        functions: answers.experience_signals?.functions || [],
         location: {
-          city: answers.location_simple?.city || null,
-          country: answers.location_simple?.country || null
+          city: answers.role_header?.location?.city || null,
+          country: answers.role_header?.location?.country || null
         },
-        languages: answers.languages || [],
-        availability: answers.availability || null,
+        languages: answers.profile_extras?.languages || [],
+        availability: answers.profile_extras?.availability || null,
         topHardSkills: answers.top_hard_skills?.skills || [],
-        certifications: answers.certifications?.certifications || [],
+        certifications: answers.credentials?.certifications || [],
         peopleManagedMax: answers.leadership_summary?.peopleManagedMax || null,
         hiringExperience: answers.leadership_summary?.hiringExperience || null,
-        publicLinks: normalizePublicLinks(answers.public_links?.links || null),
-        // Raw employer fields for database storage (non-breaking addition)
-        employerRaw: answers.current_employer?.employerRaw || null,
-        employerDescriptor: answers.current_employer?.employerDescriptor || null
+        publicLinks: normalizePublicLinks(answers.profile_extras?.links || null),
+        // Raw employer fields for database storage
+        employerRaw: answers.role_header?.employerRaw || null,
+        employerDescriptor: answers.role_header?.employerDescriptor || null
       };
 
       // Title-Case functions as final guard (keeps output pretty even if model slips)
-      overview.functions = (answers.primary_functions?.functions || []).map(s =>
+      overview.functions = (overview.functions || []).map(s =>
         s ? s.replace(/\w\S*/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) : s
       );
 
       // Filter out clearly responsibility-focused achievements (safety net)
-      overview.topAchievements = (answers.top3_achievements?.achievements || [])
+      overview.topAchievements = (overview.topAchievements || [])
         .filter(a => a && a.text && !/^(Leading|Managing|Building|Creating|Developing)\b/i.test(a.text));
 
       // Return overview with metadata
