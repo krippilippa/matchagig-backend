@@ -114,7 +114,10 @@ export function storeJD(jdHash, jdData) {
 
 export function getJD(jdHash) {
   const jdStorage = resumeStorage.get('jd_cache');
-  return jdStorage ? jdStorage.get(jdHash) : null;
+  if (!jdStorage || !(jdStorage instanceof Map)) {
+    return null;
+  }
+  return jdStorage.get(jdHash);
 }
 
 export function hasFreshJD(jdHash) {
@@ -131,10 +134,16 @@ export function hasFreshJD(jdHash) {
 
 export function getAllJDHashes() {
   const jdStorage = resumeStorage.get('jd_cache');
-  return jdStorage ? Array.from(jdStorage.keys()) : [];
+  if (!jdStorage || !(jdStorage instanceof Map)) {
+    return [];
+  }
+  return Array.from(jdStorage.keys());
 }
 
 export function getJDStorageSize() {
   const jdStorage = resumeStorage.get('jd_cache');
-  return jdStorage ? jdStorage.size : 0;
+  if (!jdStorage || !(jdStorage instanceof Map)) {
+    return 0;
+  }
+  return jdStorage.size;
 }
