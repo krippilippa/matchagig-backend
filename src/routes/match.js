@@ -28,7 +28,7 @@ function eduRank(level) {
 // Skill canonicalization map (synonyms -> canonical)
 const SKILL_SYNONYMS = {
   linkedin: ['linkedin', 'li prospecting', 'social selling', 'sales navigator', 'linkedin sales navigator'],
-  leadgen: ['lead gen','leadgen','prospecting','outreach','cold outreach'],
+  leadgen: ['lead gen','leadgen','lead-generation','prospecting','outreach','cold outreach','pipeline','pipeline building'],
   crm: ['salesforce','hubspot','pipedrive','zoho crm','crm'],
   'it-basics': ['software development terms','it technologies','tech stack','information technology','it']
 };
@@ -173,35 +173,56 @@ function industryAlignmentBoost(jd, resume) {
 }
 
 function languageGatePenalty(jLangs, rLangs) {
-  if ((jLangs || []).length === 0) return 0; // no gate
+  if ((jLangs || []).length === 0) return { penalty: 0, mode: 'none' }; // no gate
   const hasAny = jLangs.some(l => rLangs.includes(l));
-  return hasAny ? 0 : -10;
+  if (hasAny) return { penalty: 0, mode: 'ok' };
+  // heuristic: if JD only lists English, make it soft (-4), else strict (-10)
+  const onlyEnglish = jLangs.length === 1 && jLangs[0] && jLangs[0].toLowerCase() === 'english';
+  return onlyEnglish ? { penalty: -4, mode: 'soft' } : { penalty: -10, mode: 'strict' };
 }
 
 export function boostedScore(cos, overlaps, jd, resume) {
-  let score = Math.round(cos * 80);
+  // base from cosine (weighted 80)
+  const base = Math.round(cos * 80);
+  let boostSum = 0;
+  let penaltySum = 0;
   const reasons = { boosts: [], penalties: [], gates: [] };
 
   const funcBoost = Math.min(10, overlaps.funcHit.length * 5);
-  if (funcBoost) { score += funcBoost; reasons.boosts.push({ type: 'functions', amount: funcBoost, matches: overlaps.funcHit }); }
+  if (funcBoost) { boostSum += funcBoost; reasons.boosts.push({ type: 'functions', amount: funcBoost, matches: overlaps.funcHit }); }
 
   const skillBoost = Math.min(20, overlaps.skillHit.length * 4);
-  if (skillBoost) { score += skillBoost; reasons.boosts.push({ type: 'skills', amount: skillBoost, matches: overlaps.skillHit }); }
+  if (skillBoost) { boostSum += skillBoost; reasons.boosts.push({ type: 'skills', amount: skillBoost, matches: overlaps.skillHit }); }
 
-  const langPenalty = languageGatePenalty(overlaps.jLangs, overlaps.rLangs);
-  if (langPenalty) { score += langPenalty; reasons.penalties.push({ type: 'language_gate', amount: langPenalty }); }
+  // Positive mirror: resume has lead-gen signals
+  if (overlaps.resumeLeadgenPresent) {
+    boostSum += 8;
+    reasons.boosts.push({ type: 'leadgen_present', amount: 8 });
+  }
+
+  const { penalty: langPenalty, mode: langMode } = languageGatePenalty(overlaps.jLangs, overlaps.rLangs);
+  if (langPenalty) { penaltySum += langPenalty; reasons.penalties.push({ type: 'language_gate', mode: langMode, amount: langPenalty }); }
 
   const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, resume.seniorityHint);
-  if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
+  if (sPen) { penaltySum += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
 
   const indBoost = industryAlignmentBoost(jd, resume);
-  if (indBoost) { score += indBoost; reasons.boosts.push({ type: 'industry', amount: indBoost }); }
+  if (indBoost) { boostSum += indBoost; reasons.boosts.push({ type: 'industry', amount: indBoost }); }
 
   // Soft must-have: lead-gen present in JD but absent in resume => -6
   if (overlaps.jdLeadgenRequired && !overlaps.resumeLeadgenPresent) {
-    score += -6;
+    penaltySum += -6;
     reasons.penalties.push({ type: 'leadgen_missing', amount: -6 });
   }
+
+  // Cap total penalties at -20
+  if (penaltySum < -20) {
+    reasons.gates.push({ type: 'penalty_cap', cappedAt: -20, original: penaltySum });
+    penaltySum = -20;
+  }
+
+  // Aggregate score
+  let score = base + boostSum + penaltySum;
 
   // Skill gate cap: if zero skill overlap, cap at 75
   if (overlaps.skillHit.length === 0) {
@@ -209,7 +230,7 @@ export function boostedScore(cos, overlaps, jd, resume) {
     score = Math.min(score, 75);
   }
 
-  score = Math.max(0, Math.min(100, score));
+  score = Math.max(0, Math.min(100, Math.round(score)));
   return { score, reasons };
 }
 
