@@ -2,8 +2,8 @@
 import OpenAI from 'openai';
 import { getResume, getJD } from '../shared/storage.js';
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
-import { normalizeToken, intersect, educationRank, educationMeets, anyContainsAny } from '../lib/text.js';
-import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL, SOFT_FUNC, SOFT_INDUSTRY, SOFT_OUTCOME } from '../config/match-weights.js';
+import { normalizeToken, intersect, educationMeets } from '../lib/text.js';
+import { SOFT_SKILL, SOFT_FUNC, SOFT_OUTCOME } from '../config/match-weights.js';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -63,15 +63,6 @@ function buildJdSignal(jd = {}) {
   ].filter(Boolean).join(' | ');
 }
 
-function seniorityPenalty(jdSeniority, cvSeniority) {
-  const j = (jdSeniority || '').toLowerCase();
-  const r = (cvSeniority || '').toLowerCase();
-  if (j === 'mid' || j === 'junior') {
-    if (r === 'lead/head' || r === 'director+') return -8;
-  }
-  return 0;
-}
-
 function computeOverlaps({ overview, jd }) {
   const functionsOverlap = intersect(overview.functions || [], jd.roleOrg?.functions || [], 3);
   const resumeSkills = overview.topHardSkills || [];
@@ -100,7 +91,7 @@ async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '',
   const exactOverlap = new Set(intersect(resumeSkills, jdSkills, 100));
   const jdFiltered = (jdSkills || []).filter(s => !exactOverlap.has(normalizeToken(s)));
   const resumeNorm = (resumeSkills || []).map(normalizeToken).filter(Boolean);
-  const matches = new Set();
+  const matches = [];
   for (const jdSkill of jdFiltered) {
     const jdTok = normalizeToken(jdSkill);
     if (!jdTok) continue;
@@ -108,17 +99,20 @@ async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '',
     for (const cvSkill of resumeNorm) {
       const cvVec = await getEmbedding(cvSkill, signalCacheKey('skill', `cv:${resumeId}`, cvSkill));
       const sim = cosine(jdVec, cvVec);
-      if (sim >= threshold) { matches.add(jdTok); break; }
+      if (sim >= threshold) { 
+        matches.push({ left: cvSkill, right: jdSkill, cosine: Number(sim.toFixed(4)) }); 
+        break; 
+      }
     }
   }
-  return Array.from(matches);
+  return matches;
 }
 
 async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '', leftId = '', rightId = '', threshold = 0.50, maxTotal = 4) {
   const exact = new Set(intersect(resumeTerms, jdTerms, 100));
   const jdFiltered = (jdTerms || []).filter(s => !exact.has(normalizeToken(s)));
   const resumeNorm = (resumeTerms || []).map(normalizeToken).filter(Boolean);
-  const matches = new Set();
+  const matches = [];
   for (const jdTerm of jdFiltered) {
     const jdTok = normalizeToken(jdTerm);
     if (!jdTok) continue;
@@ -127,18 +121,21 @@ async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '
       const cvTok = normalizeToken(cvTerm);
       const cvVec = await getEmbedding(cvTok, signalCacheKey(cachePrefix, `left:${leftId}`, cvTok));
       const sim = cosine(jdVec, cvVec);
-      if (sim >= threshold) { matches.add({ right: jdTok, left: cvTok, cosine: Number(sim.toFixed(4)) }); break; }
+      if (sim >= threshold) { 
+        matches.push({ left: cvTerm, right: jdTerm, cosine: Number(sim.toFixed(4)) }); 
+        break; 
+      }
     }
-    if (matches.size >= maxTotal) break;
+    if (matches.length >= maxTotal) break;
   }
-  return Array.from(matches);
+  return matches;
 }
 
 // Pairwise semantic matching for achievements (resume) ↔ outcomes (JD)
 async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [], embedFn) {
   const A = (resumeAchievements || []).map(a => String(a || '').trim()).filter(Boolean);
   const B = (jdOutcomes || []).map(o => String(o || '').trim()).filter(Boolean);
-  if (!A.length || !B.length) return { pairs: [], boost: 0 };
+  if (!A.length || !B.length) return { pairs: [] };
 
   const aVecs = await Promise.all(A.map(t => embedFn(t)));
   const bVecs = await Promise.all(B.map(t => embedFn(t)));
@@ -153,14 +150,12 @@ async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [
       if (cos > bestCos) { bestCos = cos; bestJ = j; }
     }
     if (bestJ >= 0 && bestCos >= SOFT_OUTCOME.cosineThreshold) {
-      pairs.push({ resumeAchievement: A[i], jdOutcome: B[bestJ], cosine: Number(bestCos.toFixed(4)) });
+      pairs.push({ left: A[i], right: B[bestJ], cosine: Number(bestCos.toFixed(4)) });
       usedB.add(bestJ);
     }
   }
 
-  const rawBoost = pairs.length * (SOFT_OUTCOME.boostPerMatch || 2);
-  const boost = Math.min(rawBoost, SOFT_OUTCOME.maxBoost || 8);
-  return { pairs, boost };
+  return { pairs };
 }
 
 export default async function matchRoute(app) {
@@ -196,94 +191,37 @@ export default async function matchRoute(app) {
       const overlaps = computeOverlaps({ overview, jd });
 
       // Debug inputs for semantic matching
-        console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
-        console.log('[DEBUG] jdFunctions:', overlaps.jdFunctions);
-        console.log('[DEBUG] resumeSkills:', overlaps.resumeSkills);
-        console.log('[DEBUG] jdSkills:', overlaps.jdSkills);
-        console.log('[DEBUG] resumeAchievements:', overlaps.resumeAchievements);
-        console.log('[DEBUG] jdOutcomes:', overlaps.jdOutcomes);
-        console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
+      console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
+      console.log('[DEBUG] jdFunctions:', overlaps.jdFunctions);
+      console.log('[DEBUG] resumeSkills:', overlaps.resumeSkills);
+      console.log('[DEBUG] jdSkills:', overlaps.jdSkills);
+      console.log('[DEBUG] resumeAchievements:', overlaps.resumeAchievements);
+      console.log('[DEBUG] jdOutcomes:', overlaps.jdOutcomes);
+      console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
 
-      // Gates
-      const reasons = { boosts: [], penalties: [], gates: [] };
-      const yoeMin = jd.requirements?.yoeMin ?? null;
-      const yoe = overview.yoe ?? null;
-      if (yoeMin != null && yoe != null && yoe < (yoeMin - 1)) {
-        reasons.gates.push({ type: 'yoe_below_min', yoe, yoeMin });
-        return reply.send({
-          resumeId, jdHash, score: 0,
-          breakdown: { cosine: Number(cos.toFixed(4)), overlaps: { ...overlaps }, reasons },
-          snippets: { resumeSignal, jdSignal },
-          metadata: { embeddingModel: getEmbeddingModel(), timestamp: new Date().toISOString() }
-        });
-      }
-      const eduMin = jd.requirements?.educationMin ?? null;
-      const eduCand = overview.education?.level ?? null;
-      if (eduMin && eduCand && educationRank(eduCand) > -1 && educationRank(eduMin) > -1 && educationRank(eduCand) < educationRank(eduMin)) {
-        reasons.gates.push({ type: 'education_below_min', edu: eduCand, eduMin });
-        return reply.send({
-          resumeId, jdHash, score: 0,
-          breakdown: { cosine: Number(cos.toFixed(4)), overlaps: { ...overlaps }, reasons },
-          snippets: { resumeSignal, jdSignal },
-          metadata: { embeddingModel: getEmbeddingModel(), timestamp: new Date().toISOString() }
-        });
-      }
-
-      // Base score
-      let score = Math.round(cos * COSINE_WEIGHT);
-
-      // Boosts (semantic-first)
-      // 1) Languages (hard overlap stays)
-      if ((overlaps.languagesOverlap || []).length > 0) {
-        score += BOOSTS.languages;
-        reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages });
-      }
-
-      // 2) Skills → semantic only
-      const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
-      console.log('[DEBUG] skillMatches(raw):', skillMatches, 'threshold=', SOFT_SKILL.cosineThreshold);
-      if (skillMatches.length > 0) {
-        const amt = Math.min(skillMatches.length * BOOSTS.skills, 10);
-        score += amt;
-        reasons.boosts.push({ type: 'skills_semantic', amount: amt, matches: skillMatches });
-      }
-
-      // 3) Functions → semantic only
-      const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, SOFT_FUNC.cosineThreshold, Math.ceil(SOFT_FUNC.maxTotal / SOFT_FUNC.perMatch) * 10);
-      console.log('[DEBUG] funcMatches(raw):', funcMatches, 'threshold=', SOFT_FUNC.cosineThreshold);
-      if (funcMatches.length > 0) {
-        const amtF = Math.min(funcMatches.length * SOFT_FUNC.perMatch, SOFT_FUNC.maxTotal);
-        if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'functions_semantic', amount: amtF, matches: funcMatches }); }
-      }
-
-      // Semantic outcome matches (JD outcomes vs CV achievements) - source of truth
-      const { pairs: outcomePairs, boost: outcomeBoost } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
-      console.log('[DEBUG] outcomePairs(raw):', outcomePairs, 'threshold=', SOFT_OUTCOME.cosineThreshold, 'boost=', outcomeBoost);
-      if (outcomeBoost > 0) { score += outcomeBoost; reasons.boosts.push({ type: 'outcomes_semantic', amount: outcomeBoost, matches: outcomePairs }); }
-
-      // Penalties
-      const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
-      if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
-      const hasLangReq = (overlaps.jdLangs || []).filter(Boolean).length > 0;
-      const langOverlapCount = (overlaps.languagesOverlap || []).length;
-      if (hasLangReq && langOverlapCount === 0) { score += PENALTIES.languageMissing; reasons.penalties.push({ type: 'language_missing', amount: PENALTIES.languageMissing }); }
-
-      // Final clamp
-      score = Math.max(0, Math.min(100, score));
+      // Get all semantic matches (no filtering by thresholds for scoring)
+      const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, 0.0);
+      console.log('[DEBUG] skillMatches(raw):', skillMatches);
+      
+      const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, 0.0, 100);
+      console.log('[DEBUG] funcMatches(raw):', funcMatches);
+      
+      const { pairs: outcomePairs } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
+      console.log('[DEBUG] outcomePairs(raw):', outcomePairs);
 
       return reply.send({
-        resumeId, jdHash, score,
+        resumeId, 
+        jdHash,
         breakdown: {
           cosine: Number(cos.toFixed(4)),
           overlaps: {
-            functions: funcMatches.map(m => m.right),
+            functions: funcMatches,
             skills: skillMatches,
             languages: overlaps.languagesOverlap,
             achievementsOverlap: outcomePairs,
             yoeCheck: overlaps.yoeCheck,
             educationCheck: overlaps.educationCheck
-          },
-          reasons
+          }
         },
         snippets: { resumeSignal, jdSignal },
         metadata: { embeddingModel: getEmbeddingModel(), timestamp: new Date().toISOString() }
