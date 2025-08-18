@@ -75,7 +75,7 @@ Schema:
 
 Rules:
 - yoeMin: numeric minimum years if clearly stated ("3+ years" → 3). If only ranges like "3–5 years", return the lower bound (3). If unspecified → null.
-- educationMin: map stated minimum to the provided ladder; if "or equivalent" without level → "Unknown"; if explicitly "no degree required" → "None".
+- educationMin: map stated minimum to the provided ladder; if "or equivalent" without level → "Unknown"; if explicitly "no degree required" → "None". If no education is mentioned anywhere in the JD, set to "None" instead of "Unknown".
 - certifications: extract named certs only (e.g., "PMP", "CFA", "CPA", "Lean Six Sigma"); up to 5.
 - peopleScopeReq.directReportsMin: numeric minimum if the JD requires team management with a number (e.g., "manage a team of 5+" → 5). If only “team leadership” without a number → null.
 - JSON only.
@@ -100,7 +100,7 @@ Schema:
   "industryHints": string[] }
 
 Rules:
-- topHardSkills: only concrete tools/platforms (e.g., Salesforce, HubSpot, Excel, SQL, ATS, Sales Navigator). Exclude umbrella phrases (e.g., 'social platforms', 'IT technologies', 'software development terms'). If none are concrete, return an empty array.
+- topHardSkills: list 3–8 tools/platforms/technical competencies explicitly required or preferred (e.g., Salesforce, Excel, SAP, SQL, LinkedIn). Include broad technical domains if phrased as such (e.g., 'IT technologies', 'software development terms'). Exclude soft skills.
 - keyOutcomes: 3–5 verb-led clauses; remove filler ('help/ensure/facilitate'); keep wording close, no numbers/units. Make them concise and action-focused (e.g., "Identify & engage prospects", "Run qualification calls", "Coordinate onboarding comms").
 - industryHints: up to 3 generic sectors mentioned as context/targets (e.g., "Retail", "Financial Services", "Healthcare"). Use generic names, Title Case. Map "Software" to "Technology" to avoid redundancy with "Information Technology".
 - JSON only.
