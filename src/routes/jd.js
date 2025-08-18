@@ -22,7 +22,7 @@ Rules:
 - title: job title as written (trim branding/noise if obvious, e.g., remove emojis/hashtags).
 - seniorityHint: infer from the title wording ONLY (e.g., Assistant=Junior; Manager=Mid/Senior; Senior=Senior; Head/Lead=Lead/Head; Director/VP/CXO=Director+). If title contains 'Representative/Associate/Executive' without 'Senior/Lead/Director', set seniorityHint = 'Mid'. If unclear → "Unknown".
 - employer: company/org if clearly named; if an 'About <Company>' section exists, set employer to that company name; else null.
-- functions: 1–2 generic domains that best describe the core role (e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"). Consider 'Account Management' when retention/growth is emphasized. Title Case. If unclear → [].
+- functions: 1–2 generic domains that best describe the core role (e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"). Consider 'Account Management' when retention/growth is emphasized, or 'Business Development' when prospecting/hunting is emphasized. Title Case. If unclear → [].
 - JSON only.
 
 Text:
@@ -101,8 +101,8 @@ Schema:
 
 Rules:
 - topHardSkills: only concrete tools/platforms (e.g., Salesforce, HubSpot, Excel, SQL, ATS, Sales Navigator). Exclude umbrella phrases (e.g., 'social platforms', 'IT technologies', 'software development terms'). If none are concrete, return an empty array.
-- keyOutcomes: 3–5 verb-led clauses; remove filler ('help/ensure/facilitate'); keep wording close, no numbers/units.
-- industryHints: up to 3 generic sectors mentioned as context/targets (e.g., "Retail", "Financial Services", "Healthcare"). Use generic names, Title Case.
+- keyOutcomes: 3–5 verb-led clauses; remove filler ('help/ensure/facilitate'); keep wording close, no numbers/units. Make them concise and action-focused (e.g., "Identify & engage prospects", "Run qualification calls", "Coordinate onboarding comms").
+- industryHints: up to 3 generic sectors mentioned as context/targets (e.g., "Retail", "Financial Services", "Healthcare"). Use generic names, Title Case. Map "Software" to "Technology" to avoid redundancy with "Information Technology".
 - JSON only.
 
 Text:
