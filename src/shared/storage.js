@@ -64,6 +64,35 @@ export function getStorageSize() {
   return resumeStorage.size;
 }
 
+// Store overview data for a resume (caching)
+export function storeOverview(resumeId, overviewData) {
+  const resumeData = resumeStorage.get(resumeId);
+  if (resumeData) {
+    resumeData.overview = overviewData;
+    resumeData.overviewTimestamp = new Date().toISOString();
+    resumeStorage.set(resumeId, resumeData);
+    console.log(`✅ Overview cached for: ${resumeId}`);
+    
+    // Auto-save to disk
+    saveToDisk();
+  } else {
+    console.warn(`⚠️ Cannot cache overview: resume ${resumeId} not found`);
+  }
+}
+
+// Check if overview is cached and fresh (within 24 hours)
+export function hasFreshOverview(resumeId) {
+  const resumeData = resumeStorage.get(resumeId);
+  if (!resumeData || !resumeData.overview || !resumeData.overviewTimestamp) {
+    return false;
+  }
+  
+  const overviewAge = Date.now() - new Date(resumeData.overviewTimestamp).getTime();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  
+  return overviewAge < maxAge;
+}
+
 // Manual save function (for explicit saves)
 export async function persistStorage() {
   await saveToDisk();

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { resumeStorage, getResume, getStorageSize, getAllResumeIds } from '../shared/storage.js';
+import { resumeStorage, getResume, getStorageSize, getAllResumeIds, storeOverview, hasFreshOverview } from '../shared/storage.js';
 
 // Shared system message for all prompts
 const SYSTEM_MESSAGE = `You extract facts from a résumé. Output ONLY valid JSON matching the provided schema. Unknown → null. Use exact wording from the text. Do not summarize, infer, or add keys.`;
@@ -360,6 +360,26 @@ export default async function overviewRoute(app) {
         return reply.code(400).send(err('BAD_REQUEST', 'Required: { resumeId }'));
       }
 
+      // Check for cached overview
+      if (hasFreshOverview(resumeId)) {
+        console.log('🔧 Overview route: Using cached overview for resumeId:', resumeId);
+        const resumeData = getResume(resumeId);
+        return reply.send({
+          resumeId,
+          name: resumeData.name,
+          email: resumeData.email,
+          phone: resumeData.phone,
+          overview: resumeData.overview,
+          metadata: {
+            promptVersion: 'v1',
+            canonicalTextLength: resumeData.canonicalText.length,
+            errors: undefined, // No errors in cache
+            timestamp: new Date().toISOString(),
+            cached: true
+          }
+        });
+      }
+
       // Fetch canonical text from storage
       const resumeData = getResume(resumeId);
       console.log('🔧 Overview route: Looking for resumeId:', resumeId);
@@ -443,6 +463,9 @@ export default async function overviewRoute(app) {
       // Filter out clearly responsibility-focused achievements (safety net)
       overview.topAchievements = (overview.topAchievements || [])
         .filter(a => a && a.text && !/^(Leading|Managing|Building|Creating|Developing)\b/i.test(a.text));
+
+      // Store the overview in cache
+      storeOverview(resumeId, overview);
 
       // Return overview with metadata
       return reply.send({
