@@ -87,48 +87,74 @@ function computeOverlaps({ overview, jd }) {
   return { functionsOverlap, skillsOverlap, languagesOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [], resumeAchievements: rAch, jdOutcomes: jOut };
 }
 
-async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '', threshold = 0.80) {
-  const exactOverlap = new Set(intersect(resumeSkills, jdSkills, 100));
-  const jdFiltered = (jdSkills || []).filter(s => !exactOverlap.has(normalizeToken(s)));
-  const resumeNorm = (resumeSkills || []).map(normalizeToken).filter(Boolean);
-  const matches = [];
-  for (const jdSkill of jdFiltered) {
-    const jdTok = normalizeToken(jdSkill);
-    if (!jdTok) continue;
-    const jdVec = await getEmbedding(jdTok, signalCacheKey('skill', `jd:${jdHash}`, jdTok));
-    for (const cvSkill of resumeNorm) {
-      const cvVec = await getEmbedding(cvSkill, signalCacheKey('skill', `cv:${resumeId}`, cvSkill));
-      const sim = cosine(jdVec, cvVec);
-      if (sim >= threshold) { 
-        matches.push({ left: cvSkill, right: jdSkill, cosine: Number(sim.toFixed(4)) }); 
-        break; 
-      }
+async function softStringMatches(
+  resumeTerms = [],
+  jdTerms = [],
+  cachePrefix = '',
+  leftId = '',
+  rightId = '',
+  threshold = 0.0,         // ignored now; we return top-1 regardless
+  maxTotal = 100           // keep high so we don't truncate
+) {
+  const normTok = (s) => normalizeToken(s);
+  const L = (resumeTerms || []).map(normTok).filter(Boolean);
+  const Rraw = jdTerms || [];
+  const R = Rraw.map(normTok).filter(Boolean);
+
+  const exactPairs = [];
+  const Rremaining = [];
+
+  // 1) Emit exact matches with cosine=1.0
+  const Lset = new Set(L);
+  for (let i = 0; i < R.length; i++) {
+    const rTok = R[i];
+    if (Lset.has(rTok)) {
+      // use the original JD term for 'right' to preserve casing
+      const rightOriginal = Rraw[i];
+      exactPairs.push({ left: rTok, right: rightOriginal, cosine: 1.0, kind: 'exact' });
+    } else {
+      Rremaining.push({ tok: rTok, original: Rraw[i] });
     }
   }
+
+  // 2) For remaining JD terms, pick best semantic left (top-1)
+  if (!L.length || !Rremaining.length) return exactPairs;
+
+  const lVecs = Object.create(null);
+  async function getLeftVec(t) {
+    if (!lVecs[t]) {
+      // context prefix helps single/brand terms
+      lVecs[t] = await getEmbedding(t, signalCacheKey(cachePrefix, `left:${leftId}`, t));
+    }
+    return lVecs[t];
+  }
+
+  const rVecs = Object.create(null);
+  async function getRightVec(t) {
+    if (!rVecs[t]) {
+      rVecs[t] = await getEmbedding(t, signalCacheKey(cachePrefix, `right:${rightId}`, t));
+    }
+    return rVecs[t];
+  }
+
+  const matches = [...exactPairs];
+  for (const r of Rremaining) {
+    const rVec = await getRightVec(r.tok);
+    let best = null;
+    for (const lTok of L) {
+      const lVec = await getLeftVec(lTok);
+      const c = cosine(rVec, lVec);
+      if (!best || c > best.cosine) best = { left: lTok, right: r.original, cosine: Number(c.toFixed(4)), kind: 'semantic' };
+    }
+    if (best) matches.push(best);
+    if (matches.length >= maxTotal) break;
+  }
+
   return matches;
 }
 
-async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '', leftId = '', rightId = '', threshold = 0.50, maxTotal = 4) {
-  const exact = new Set(intersect(resumeTerms, jdTerms, 100));
-  const jdFiltered = (jdTerms || []).filter(s => !exact.has(normalizeToken(s)));
-  const resumeNorm = (resumeTerms || []).map(normalizeToken).filter(Boolean);
-  const matches = [];
-  for (const jdTerm of jdFiltered) {
-    const jdTok = normalizeToken(jdTerm);
-    if (!jdTok) continue;
-    const jdVec = await getEmbedding(jdTok, signalCacheKey(cachePrefix, `right:${rightId}`, jdTok));
-    for (const cvTerm of resumeNorm) {
-      const cvTok = normalizeToken(cvTerm);
-      const cvVec = await getEmbedding(cvTok, signalCacheKey(cachePrefix, `left:${leftId}`, cvTok));
-      const sim = cosine(jdVec, cvVec);
-      if (sim >= threshold) { 
-        matches.push({ left: cvTerm, right: jdTerm, cosine: Number(sim.toFixed(4)) }); 
-        break; 
-      }
-    }
-    if (matches.length >= maxTotal) break;
-  }
-  return matches;
+async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '') {
+  return softStringMatches(resumeSkills, jdSkills, 'skill', resumeId, jdHash, 0.0, 100);
 }
 
 // Pairwise semantic matching for achievements (resume) ↔ outcomes (JD)
@@ -149,8 +175,8 @@ async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [
       const cos = cosine(aVecs[i], bVecs[j]);
       if (cos > bestCos) { bestCos = cos; bestJ = j; }
     }
-    if (bestJ >= 0 && bestCos >= SOFT_OUTCOME.cosineThreshold) {
-      pairs.push({ left: A[i], right: B[bestJ], cosine: Number(bestCos.toFixed(4)) });
+    if (bestJ >= 0) {
+      pairs.push({ left: A[i], right: B[bestJ], cosine: Number(bestCos.toFixed(4)), kind: 'semantic' });
       usedB.add(bestJ);
     }
   }
@@ -200,10 +226,10 @@ export default async function matchRoute(app) {
       console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
 
       // Get all semantic matches (no filtering by thresholds for scoring)
-      const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, 0.0);
+      const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash);
       console.log('[DEBUG] skillMatches(raw):', skillMatches);
       
-      const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, 0.0, 100);
+      const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash);
       console.log('[DEBUG] funcMatches(raw):', funcMatches);
       
       const { pairs: outcomePairs } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
