@@ -9,6 +9,7 @@ import redflagsRoute from './routes/redflags.js';
 import overviewRoute from './routes/overview.js';
 import jdRoute from './routes/jd.js';
 import matchRoute from './routes/match.js';
+import bulkRoutes from './routes/bulk.js';
 
 const PORT = process.env.PORT || 8787;
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
@@ -33,6 +34,7 @@ await app.register(redflagsRoute);
 await app.register(overviewRoute);
 await app.register(jdRoute);
 await app.register(matchRoute);
+await app.register(bulkRoutes);
 
 console.log('✅ All routes registered with shared storage');
 
