@@ -35,4 +35,10 @@ export const SOFT_INDUSTRY = {
   maxTotal: 4,
 };
 
+export const SOFT_OUTCOME = {
+  cosineThreshold: 0.72,
+  perMatch: 2,
+  maxTotal: 6,
+};
+
 

@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { getResume, getJD } from '../shared/storage.js';
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
 import { normalizeToken, intersect, educationRank, educationMeets, anyContainsAny } from '../lib/text.js';
-import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL, SOFT_FUNC, SOFT_INDUSTRY } from '../config/match-weights.js';
+import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL, SOFT_FUNC, SOFT_INDUSTRY, SOFT_OUTCOME } from '../config/match-weights.js';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -104,7 +104,7 @@ function computeOverlaps({ overview, jd }) {
   const eduCand = overview.education?.level ?? null;
   const educationCheck = educationMeets(eduCand, eduMin);
 
-  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [] };
+  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [], resumeAchievements: rAch, jdOutcomes: jOut };
 }
 
 async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '', threshold = 0.80) {
@@ -138,7 +138,7 @@ async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '
       const cvTok = normalizeToken(cvTerm);
       const cvVec = await getEmbedding(cvTok, signalCacheKey(cachePrefix, `left:${leftId}`, cvTok));
       const sim = cosine(jdVec, cvVec);
-      if (sim >= threshold) { matches.add(jdTok); break; }
+      if (sim >= threshold) { matches.add({ right: jdTok, left: cvTok, cosine: Number(sim.toFixed(4)) }); break; }
     }
     if (matches.size >= maxTotal) break;
   }
@@ -211,10 +211,10 @@ export default async function matchRoute(app) {
       if ((overlaps.languagesOverlap || []).length > 0) { score += BOOSTS.languages; reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages }); }
       if ((overlaps.achievementsOverlap || []).length > 0) { score += BOOSTS.achievements; reasons.boosts.push({ type: 'achievements', amount: BOOSTS.achievements }); }
 
-      // Soft semantic skill matches (+2 each, capped via config)
+      // Soft semantic skill matches (+2 each, capped)
       const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
       if (softMatches.length > 0) {
-        const amt = Math.min(softMatches.length * BOOSTS.softSkillPerMatch, 6); // cap +6
+        const amt = Math.min(softMatches.length * BOOSTS.softSkillPerMatch, 6);
         score += amt;
         reasons.boosts.push({ type: 'soft_skill_matches', amount: amt, matches: softMatches });
       }
@@ -226,9 +226,12 @@ export default async function matchRoute(app) {
         if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'soft_function_matches', amount: amtF, matches: softFuncMatches }); }
       }
 
-      // Soft semantic industry matches (JD industries only for now)
-      const softIndMatches = await softStringMatches([], overlaps.jdIndustries, 'industry', resumeId, jdHash, SOFT_INDUSTRY.cosineThreshold, Math.ceil(SOFT_INDUSTRY.maxTotal / SOFT_INDUSTRY.perMatch) * 10);
-      // Note: no resume industries to compare; skip unless you add CV industries later
+      // Soft semantic outcome matches (JD outcomes vs CV achievements)
+      const softOutcomeMatches = await softStringMatches(overlaps.resumeAchievements, overlaps.jdOutcomes, 'outcome', resumeId, jdHash, SOFT_OUTCOME.cosineThreshold, Math.ceil(SOFT_OUTCOME.maxTotal / SOFT_OUTCOME.perMatch) * 10);
+      if (softOutcomeMatches.length > 0) {
+        const amtO = Math.min(softOutcomeMatches.length * SOFT_OUTCOME.perMatch, SOFT_OUTCOME.maxTotal);
+        if (amtO > 0) { score += amtO; reasons.boosts.push({ type: 'soft_outcome_matches', amount: amtO, matches: softOutcomeMatches }); }
+      }
 
       // Penalties
       const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
@@ -252,7 +255,8 @@ export default async function matchRoute(app) {
             yoeCheck: overlaps.yoeCheck,
             educationCheck: overlaps.educationCheck,
             softSkillMatches: softMatches,
-            softFunctionMatches: softFuncMatches
+            softFunctionMatches: softFuncMatches,
+            softOutcomeMatches: softOutcomeMatches
           },
           reasons
         },
