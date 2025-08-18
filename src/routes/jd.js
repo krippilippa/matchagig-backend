@@ -317,6 +317,7 @@ export default async function jdRoute(app) {
       const metadata = {
         promptVersion: 'v1',
         jdTextLength: jdText.length,
+        jdText: jdText, // Store the original JD text for full text matching
         errors: errors.length > 0 ? errors : undefined,
         timestamp: new Date().toISOString()
       };
