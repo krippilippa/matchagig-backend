@@ -27,9 +27,10 @@ function eduRank(level) {
 
 // Skill canonicalization map (synonyms -> canonical)
 const SKILL_SYNONYMS = {
-  linkedin: ['linkedin', 'li prospecting', 'sales navigator', 'linkedin sales navigator'],
+  linkedin: ['linkedin', 'li prospecting', 'social selling', 'sales navigator', 'linkedin sales navigator'],
+  leadgen: ['lead gen','leadgen','prospecting','outreach','cold outreach'],
   crm: ['salesforce','hubspot','pipedrive','zoho crm','crm'],
-  it: ['software development terms','it technologies','information technology','it']
+  'it-basics': ['software development terms','it technologies','tech stack','information technology','it']
 };
 
 function canonicalizeSkill(raw) {
@@ -42,6 +43,15 @@ function canonicalizeSkill(raw) {
 
 function canonicalizeSkills(arr) {
   return Array.from(new Set((arr || []).map(canonicalizeSkill).filter(Boolean)));
+}
+
+function textContainsAny(text, terms) {
+  const t = norm(text).toLowerCase();
+  return terms.some(k => t.includes(k));
+}
+
+function anyContainsAny(arr, terms) {
+  return (arr || []).some(v => textContainsAny(typeof v === 'string' ? v : v?.text, terms));
 }
 
 function buildResumeSignal(overview = {}) {
@@ -114,6 +124,13 @@ function intersections({ resume, jd }) {
   const jLangs = normArr(jd.logistics?.languages);
   const langHit = rLangs.filter(x => jLangs.includes(x));
 
+  // Lead-gen requirement: detect in JD (skills or outcomes) using synonym terms
+  const leadgenTerms = SKILL_SYNONYMS.leadgen || [];
+  const jdLeadgenRequired = anyContainsAny(jd.successSignals?.topHardSkills, leadgenTerms)
+    || anyContainsAny(jd.successSignals?.keyOutcomes, leadgenTerms);
+  const resumeLeadgenPresent = anyContainsAny(resume.topHardSkills, leadgenTerms)
+    || anyContainsAny(resume.topAchievements, leadgenTerms);
+
   // Achievements vs JD outcomes (loose contains)
   const rAch = (resume.topAchievements || []).map(a => norm(a?.text).toLowerCase()).filter(Boolean);
   const jOut = (jd.successSignals?.keyOutcomes || []).map(o => norm(o?.text).toLowerCase()).filter(Boolean);
@@ -127,7 +144,12 @@ function intersections({ resume, jd }) {
   const eduMin = jd.requirements?.educationMin ?? null; const eduCand = resume.education?.level ?? null;
   const eduCheck = (eduMin == null || eduMin === 'Unknown' || eduMin === 'None' || (eduRank(eduCand) >= eduRank(eduMin)));
 
-  return { rFuncs, jFuncs, rSkills, jSkills, rLangs, jLangs, funcHit, skillHit, langHit, achHit, yoeCheck, eduCheck };
+  return {
+    rFuncs, jFuncs, rSkills, jSkills, rLangs, jLangs,
+    funcHit, skillHit, langHit, achHit,
+    jdLeadgenRequired, resumeLeadgenPresent,
+    yoeCheck, eduCheck
+  };
 }
 
 function seniorityPenalty(jdSeniority, cvSeniority) {
@@ -152,35 +174,34 @@ function industryAlignmentBoost(jd, resume) {
 
 function languageGatePenalty(jLangs, rLangs) {
   if ((jLangs || []).length === 0) return 0; // no gate
-  // If JD lists languages and resume doesn't include ANY of them -> -10
   const hasAny = jLangs.some(l => rLangs.includes(l));
   return hasAny ? 0 : -10;
 }
 
-function boostedScore(cos, overlaps, jd, resume) {
-  // Base from cosine (weighted 80)
+export function boostedScore(cos, overlaps, jd, resume) {
   let score = Math.round(cos * 80);
   const reasons = { boosts: [], penalties: [], gates: [] };
 
-  // Functions boost: +5 per match up to +10
   const funcBoost = Math.min(10, overlaps.funcHit.length * 5);
   if (funcBoost) { score += funcBoost; reasons.boosts.push({ type: 'functions', amount: funcBoost, matches: overlaps.funcHit }); }
 
-  // Skills boost: +4 per match up to +20 (canonicalized)
   const skillBoost = Math.min(20, overlaps.skillHit.length * 4);
   if (skillBoost) { score += skillBoost; reasons.boosts.push({ type: 'skills', amount: skillBoost, matches: overlaps.skillHit }); }
 
-  // Language gate penalty if JD requires languages and resume lacks them
   const langPenalty = languageGatePenalty(overlaps.jLangs, overlaps.rLangs);
   if (langPenalty) { score += langPenalty; reasons.penalties.push({ type: 'language_gate', amount: langPenalty }); }
 
-  // Seniority distance penalties (conservative)
   const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, resume.seniorityHint);
   if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
 
-  // Industry alignment (light +5 if any match)
   const indBoost = industryAlignmentBoost(jd, resume);
   if (indBoost) { score += indBoost; reasons.boosts.push({ type: 'industry', amount: indBoost }); }
+
+  // Soft must-have: lead-gen present in JD but absent in resume => -6
+  if (overlaps.jdLeadgenRequired && !overlaps.resumeLeadgenPresent) {
+    score += -6;
+    reasons.penalties.push({ type: 'leadgen_missing', amount: -6 });
+  }
 
   // Skill gate cap: if zero skill overlap, cap at 75
   if (overlaps.skillHit.length === 0) {
@@ -188,7 +209,6 @@ function boostedScore(cos, overlaps, jd, resume) {
     score = Math.min(score, 75);
   }
 
-  // Clamp 0-100
   score = Math.max(0, Math.min(100, score));
   return { score, reasons };
 }
@@ -235,7 +255,9 @@ export default async function matchRoute(app) {
             languages: overlap.langHit,
             achievementsOverlap: overlap.achHit,
             yoeCheck: overlap.yoeCheck,
-            educationCheck: overlap.eduCheck
+            educationCheck: overlap.eduCheck,
+            leadgenRequired: overlap.jdLeadgenRequired,
+            leadgenPresent: overlap.resumeLeadgenPresent
           },
           reasons
         },
