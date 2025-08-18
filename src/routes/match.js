@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getResume, getJD } from '../shared/storage.js';
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
 import { normalizeToken, intersect, educationRank, educationMeets, anyContainsAny } from '../lib/text.js';
+import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL } from '../config/match-weights.js';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -106,7 +107,7 @@ function computeOverlaps({ overview, jd }) {
   return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills };
 }
 
-async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '') {
+async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '', threshold = 0.80) {
   // For each JD skill not in exact overlap, check embedding similarity with each resume skill; threshold 0.80
   const exactOverlap = new Set(intersect(resumeSkills, jdSkills, 100));
   const jdFiltered = (jdSkills || []).filter(s => !exactOverlap.has(normalizeToken(s)));
@@ -119,7 +120,7 @@ async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '',
     for (const cvSkill of resumeNorm) {
       const cvVec = await getEmbedding(cvSkill, signalCacheKey('skill', `cv:${resumeId}`, cvSkill));
       const sim = cosine(jdVec, cvVec);
-      if (sim >= 0.80) { matches.add(jdTok); break; }
+      if (sim >= threshold) { matches.add(jdTok); break; }
     }
   }
   return Array.from(matches);
@@ -184,18 +185,18 @@ export default async function matchRoute(app) {
       }
 
       // Base score
-      let score = Math.round(cos * 70);
+      let score = Math.round(cos * COSINE_WEIGHT);
 
       // Boosts
-      if ((overlaps.functionsOverlap || []).length > 0) { score += 5; reasons.boosts.push({ type: 'functions', amount: 5 }); }
-      if ((overlaps.skillsOverlap || []).length > 0)    { score += 5; reasons.boosts.push({ type: 'skills', amount: 5 }); }
-      if ((overlaps.languagesOverlap || []).length > 0) { score += 5; reasons.boosts.push({ type: 'languages', amount: 5 }); }
-      if ((overlaps.achievementsOverlap || []).length > 0) { score += 3; reasons.boosts.push({ type: 'achievements', amount: 3 }); }
+      if ((overlaps.functionsOverlap || []).length > 0) { score += BOOSTS.functions; reasons.boosts.push({ type: 'functions', amount: BOOSTS.functions }); }
+      if ((overlaps.skillsOverlap || []).length > 0)    { score += BOOSTS.skills; reasons.boosts.push({ type: 'skills', amount: BOOSTS.skills }); }
+      if ((overlaps.languagesOverlap || []).length > 0) { score += BOOSTS.languages; reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages }); }
+      if ((overlaps.achievementsOverlap || []).length > 0) { score += BOOSTS.achievements; reasons.boosts.push({ type: 'achievements', amount: BOOSTS.achievements }); }
 
       // Soft semantic skill matches (+2 each)
-      const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash);
+      const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
       if (softMatches.length > 0) {
-        const amt = softMatches.length * 2;
+        const amt = softMatches.length * BOOSTS.softSkillPerMatch;
         score += amt;
         reasons.boosts.push({ type: 'soft_skill_matches', amount: amt, matches: softMatches });
       }
@@ -205,7 +206,7 @@ export default async function matchRoute(app) {
       if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
       const hasLangReq = (overlaps.jdLangs || []).filter(Boolean).length > 0;
       const langOverlapCount = (overlaps.languagesOverlap || []).length;
-      if (hasLangReq && langOverlapCount === 0) { score += -10; reasons.penalties.push({ type: 'language_missing', amount: -10 }); }
+      if (hasLangReq && langOverlapCount === 0) { score += PENALTIES.languageMissing; reasons.penalties.push({ type: 'language_missing', amount: PENALTIES.languageMissing }); }
 
       // Final clamp
       score = Math.max(0, Math.min(100, score));
