@@ -2,6 +2,7 @@ import OpenAI, { toFile } from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { resumeStorage, storeResume } from '../shared/storage.js';
+import { normalizeCanonicalText } from '../lib/canon.js';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -13,79 +14,7 @@ const ResumeSchema = z.object({
   text: z.string().min(1, "Text must not be empty")
 }).strict(); // No extra keys allowed
 
-// Post-processing normalization for canonical text (improved pipeline)
-function normalizeCanonicalText(raw, pageBreaks = []) {
-  let t = raw ?? "";
-  const originalLength = t.length;
-  const originalNewlines = (t.match(/\n/g) || []).length;
 
-  // 1) Unicode & control chars
-  t = t.normalize('NFC');
-  t = t.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ''); // Remove control chars except \n
-
-  // 2) Whitespace policy
-  t = t.replace(/\t/g, ' ');                    // Convert tabs to spaces
-  t = t.replace(/[^\S\n]+/g, ' ');              // Collapse spaces within lines (keep newlines)
-  t = t.replace(/\n{3,}/g, '\n\n');            // Collapse 3+ blank lines → 1 blank line
-
-  // 3) De-hyphenation (line-wrap only, safe)
-  // Only join if: both sides alphabetic, right side starts lowercase, left side ≥2 chars, left side not ALL-CAPS
-  const hyphenJoins = (t.match(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu) || []).length;
-  t = t.replace(/(\p{L}{2,})-\s*\n\s*(\p{Ll}+)/gu, '$1$2');
-
-  // 3b) Inline hyphen spacing fix: "Cyber- Security" -> "Cyber-Security"
-  t = t.replace(/(?<=\p{L})-\s+(?=\p{L})/gu, '-');
-
-  // 4) Bullet normalization (Unicode-aware)
-  const bulletStart = /^[\s]*[•‣∙◦–—·*●○-][\s]+/gm;
-  const bulletsNormalized = (t.match(bulletStart) || []).length;
-  t = t.replace(bulletStart, '- ');
-  t = t.replace(/^-[\s]{2,}/gm, '- ');         // Compress - followed by 2+ spaces
-
-  // 5) Header/footer & page number removal (statistical)
-  // Remove bare page number lines
-  t = t.replace(/^page\s*\d+$/gim, '');
-  t = t.replace(/^\d+\/\d+$/gm, '');
-  t = t.replace(/^-\s*\d+\s*-$/gm, '');
-
-  // 6) Multi-column merge - REMOVED aggressive ALL-CAPS spacer rule
-  // The previous rule was too aggressive and split legitimate ALL-CAPS words
-  // const gluedWordsFixed = 0; // No longer tracking this metric
-
-  // 7) Section break hints (very light)
-  // Insert newline before ALL-CAPS headers stuck to prior sentence
-  const sectionBreaks = (t.match(/([^.])\.(?=[A-Z][A-Z0-9/& \-]{5,}\b)/g) || []).length;
-  t = t.replace(/([^.])\.(?=[A-Z][A-Z0-9/& \-]{5,}\b)/g, '$1.\n');
-
-  // 8) Trim line endings and ensure file ends with single newline
-  t = t.replace(/[ \t]+\n/g, '\n').trimEnd() + '\n';
-
-  // Quality metrics
-  const finalLength = t.length;
-  const finalNewlines = (t.match(/\n/g) || []).length;
-  
-  // Guardrail: detect over-split ALL-CAPS words
-  const overSplitWords = (t.match(/^[A-Z]{2,}\s+[A-Z]{2,}$/gm) || []).length;
-  if (overSplitWords > 0) {
-    console.warn(`Warning: ${overSplitWords} potentially over-split ALL-CAPS words detected`);
-  }
-  
-  // Log normalization metrics (for monitoring)
-  console.log(`Normalization metrics:`, {
-    originalLength,
-    finalLength,
-    originalNewlines,
-    finalNewlines,
-    hyphenJoins,
-    bulletsNormalized,
-    gluedWordsFixed: 0, // No longer tracking this metric
-    sectionBreaks,
-    overSplitWords,
-    compressionRatio: ((originalLength - finalLength) / originalLength * 100).toFixed(1) + '%'
-  });
-
-  return t;
-}
 
 export default async function uploadRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
