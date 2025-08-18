@@ -196,7 +196,6 @@ export default async function matchRoute(app) {
       const overlaps = computeOverlaps({ overview, jd });
 
       // Debug inputs for semantic matching
-      if (process.env.DEBUG_MATCH === '1') {
         console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
         console.log('[DEBUG] jdFunctions:', overlaps.jdFunctions);
         console.log('[DEBUG] resumeSkills:', overlaps.resumeSkills);
@@ -204,7 +203,6 @@ export default async function matchRoute(app) {
         console.log('[DEBUG] resumeAchievements:', overlaps.resumeAchievements);
         console.log('[DEBUG] jdOutcomes:', overlaps.jdOutcomes);
         console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
-      }
 
       // Gates
       const reasons = { boosts: [], penalties: [], gates: [] };
@@ -243,6 +241,7 @@ export default async function matchRoute(app) {
 
       // 2) Skills → semantic only
       const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
+      console.log('[DEBUG] skillMatches(raw):', skillMatches, 'threshold=', SOFT_SKILL.cosineThreshold);
       if (skillMatches.length > 0) {
         const amt = Math.min(skillMatches.length * BOOSTS.skills, 10);
         score += amt;
@@ -251,6 +250,7 @@ export default async function matchRoute(app) {
 
       // 3) Functions → semantic only
       const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, SOFT_FUNC.cosineThreshold, Math.ceil(SOFT_FUNC.maxTotal / SOFT_FUNC.perMatch) * 10);
+      console.log('[DEBUG] funcMatches(raw):', funcMatches, 'threshold=', SOFT_FUNC.cosineThreshold);
       if (funcMatches.length > 0) {
         const amtF = Math.min(funcMatches.length * SOFT_FUNC.perMatch, SOFT_FUNC.maxTotal);
         if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'functions_semantic', amount: amtF, matches: funcMatches }); }
@@ -258,6 +258,7 @@ export default async function matchRoute(app) {
 
       // Semantic outcome matches (JD outcomes vs CV achievements) - source of truth
       const { pairs: outcomePairs, boost: outcomeBoost } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
+      console.log('[DEBUG] outcomePairs(raw):', outcomePairs, 'threshold=', SOFT_OUTCOME.cosineThreshold, 'boost=', outcomeBoost);
       if (outcomeBoost > 0) { score += outcomeBoost; reasons.boosts.push({ type: 'outcomes_semantic', amount: outcomeBoost, matches: outcomePairs }); }
 
       // Penalties
