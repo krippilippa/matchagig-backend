@@ -97,3 +97,44 @@ export function hasFreshOverview(resumeId) {
 export async function persistStorage() {
   await saveToDisk();
 }
+
+// JD storage functions
+export function storeJD(jdHash, jdData) {
+  const jdStorage = resumeStorage.get('jd_cache') || new Map();
+  jdStorage.set(jdHash, {
+    ...jdData,
+    timestamp: new Date().toISOString()
+  });
+  resumeStorage.set('jd_cache', jdStorage);
+  console.log(`✅ JD cached for hash: ${jdHash}`);
+  
+  // Auto-save to disk
+  saveToDisk();
+}
+
+export function getJD(jdHash) {
+  const jdStorage = resumeStorage.get('jd_cache');
+  return jdStorage ? jdStorage.get(jdHash) : null;
+}
+
+export function hasFreshJD(jdHash) {
+  const jdData = getJD(jdHash);
+  if (!jdData || !jdData.timestamp) {
+    return false;
+  }
+  
+  const jdAge = Date.now() - new Date(jdData.timestamp).getTime();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  
+  return jdAge < maxAge;
+}
+
+export function getAllJDHashes() {
+  const jdStorage = resumeStorage.get('jd_cache');
+  return jdStorage ? Array.from(jdStorage.keys()) : [];
+}
+
+export function getJDStorageSize() {
+  const jdStorage = resumeStorage.get('jd_cache');
+  return jdStorage ? jdStorage.size : 0;
+}

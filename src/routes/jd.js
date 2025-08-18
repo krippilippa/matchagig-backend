@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { storeJD, getJD, hasFreshJD, getJDStorageSize, getAllJDHashes } from '../shared/storage.js';
+import crypto from 'crypto';
 
 // Shared system message for all JD prompts
 const SYSTEM_MESSAGE = `You extract facts from a job description. Output ONLY valid JSON matching the provided schema. Unknown → null. Use wording from the JD where applicable. Do not summarize, infer beyond the text, or add keys.`;
@@ -209,6 +211,57 @@ async function runJDPrompt(openai, basePrompt, jdText, promptKey, maxRetries = 1
 export default async function jdRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  // GET endpoint to retrieve cached JD results
+  app.get('/v1/jd/:jdHash', async (req, reply) => {
+    try {
+      const { jdHash } = req.params;
+      
+      if (!jdHash) {
+        return reply.code(400).send(err('BAD_REQUEST', 'Required: jdHash parameter'));
+      }
+
+      const jdData = getJD(jdHash);
+      
+      if (!jdData) {
+        return reply.code(404).send(err('NOT_FOUND', 'JD not found in cache'));
+      }
+
+      return reply.send({
+        jdHash,
+        jd: jdData.jd,
+        metadata: {
+          ...jdData.metadata,
+          cached: true,
+          retrievedAt: new Date().toISOString()
+        }
+      });
+
+    } catch (e) {
+      req.log.error(e);
+      return reply.code(500).send(err('JD_GET_ERROR', 'Failed to retrieve JD', { hint: e.message }));
+    }
+  });
+
+  // GET endpoint to list all cached JDs
+  app.get('/v1/jd', async (req, reply) => {
+    try {
+      const jdHashes = getAllJDHashes();
+      const storageSize = getJDStorageSize();
+      
+      return reply.send({
+        totalCached: storageSize,
+        jdHashes,
+        metadata: {
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (e) {
+      req.log.error(e);
+      return reply.code(500).send(err('JD_LIST_ERROR', 'Failed to list JDs', { hint: e.message }));
+    }
+  });
+
   app.post('/v1/jd', async (req, reply) => {
     if (!process.env.OPENAI_API_KEY) {
       return reply.code(500).send(err('CONFIG', 'OPENAI_API_KEY not set'));
@@ -220,6 +273,24 @@ export default async function jdRoute(app) {
 
       if (!jdText) {
         return reply.code(400).send(err('BAD_REQUEST', 'Required: { jdText }'));
+      }
+
+      // Generate hash for the JD text
+      const jdHash = crypto.createHash('sha256').update(jdText).digest('hex').substring(0, 16);
+
+      // Check for cached JD
+      if (hasFreshJD(jdHash)) {
+        console.log('🔧 JD route: Using cached JD for hash:', jdHash);
+        const cachedJD = getJD(jdHash);
+        return reply.send({
+          jdHash,
+          jd: cachedJD.jd,
+          metadata: {
+            ...cachedJD.metadata,
+            cached: true,
+            retrievedAt: new Date().toISOString()
+          }
+        });
       }
 
       const promptPromises = Object.entries(JD_PROMPTS).map(async ([key, config]) => {
@@ -243,14 +314,20 @@ export default async function jdRoute(app) {
         successSignals: answers.success_signals || null
       };
 
+      const metadata = {
+        promptVersion: 'v1',
+        jdTextLength: jdText.length,
+        errors: errors.length > 0 ? errors : undefined,
+        timestamp: new Date().toISOString()
+      };
+
+      // Store JD in cache
+      storeJD(jdHash, { jd, metadata });
+
       return reply.send({
+        jdHash,
         jd,
-        metadata: {
-          promptVersion: 'v1',
-          jdTextLength: jdText.length,
-          errors: errors.length > 0 ? errors : undefined,
-          timestamp: new Date().toISOString()
-        }
+        metadata
       });
 
     } catch (e) {
