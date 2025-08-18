@@ -15,47 +15,50 @@ const norm = (s) => (s || '').toString().trim();
 
 function buildResumeSignal(overview = {}) {
   const title = norm(overview.title);
-  const seniority = norm(overview.seniorityHint);
   const funcs = (overview.functions || []).map(norm).join(', ');
   const skills = (overview.topHardSkills || []).map(norm).join(', ');
+  const outcomes = (overview.topAchievements || []).map(a => norm(a?.text)).filter(Boolean).join(', ');
+  const industries = ''; // not available on CV side in current schema
+  const seniority = norm(overview.seniorityHint);
   const langs = (overview.languages || []).map(x => typeof x === 'string' ? norm(x) : norm(x?.name)).join(', ');
   const eduLevel = norm(overview.education?.level);
   const yoe = overview.yoe != null ? String(overview.yoe) : '';
-  const ach = (overview.topAchievements || []).map(a => norm(a?.text)).filter(Boolean).join(', ');
 
   return [
     `TITLE ${title}`,
-    seniority && `SENIORITY ${seniority}`,
     funcs && `FUNCTIONS ${funcs}`,
     skills && `SKILLS ${skills}`,
+    outcomes && `OUTCOMES ${outcomes}`,
+    industries && `INDUSTRIES ${industries}`,
+    seniority && `SENIORITY ${seniority}`,
     langs && `LANGUAGES ${langs}`,
     eduLevel && `EDU ${eduLevel}`,
-    yoe && `YOE ${yoe}`,
-    ach && `ACHIEVEMENTS ${ach}`
+    yoe && `YOE ${yoe}`
   ].filter(Boolean).join(' | ');
 }
 
 function buildJdSignal(jd = {}) {
   const ro = jd.roleOrg || {}; const log = jd.logistics || {}; const req = jd.requirements || {}; const ss = jd.successSignals || {};
-  const title = norm(ro.title); const seniority = norm(ro.seniorityHint);
+  const title = norm(ro.title);
   const funcs = (ro.functions || []).map(norm).join(', ');
   const skills = (ss.topHardSkills || []).map(norm).join(', ');
-  const langs = (log.languages || []).map(norm).join(', ');
-  const inds = (ss.industryHints || []).map(norm).join(', ');
   const outcomes = (ss.keyOutcomes || []).map(o => norm(o?.text)).filter(Boolean).join(', ');
-  const workMode = norm(log.location?.workMode);
+  const inds = (ss.industryHints || []).map(norm).join(', ');
+  const seniority = norm(ro.seniorityHint);
+  const langs = (log.languages || []).map(norm).join(', ');
   const eduMin = norm(req.educationMin);
+  const workMode = norm(log.location?.workMode);
 
   return [
     `TITLE ${title}`,
-    seniority && `SENIORITY ${seniority}`,
     funcs && `FUNCTIONS ${funcs}`,
     skills && `SKILLS ${skills}`,
-    langs && `LANGUAGES ${langs}`,
+    outcomes && `OUTCOMES ${outcomes}`,
     inds && `INDUSTRIES ${inds}`,
-    workMode && `WORKMODE ${workMode}`,
+    seniority && `SENIORITY ${seniority}`,
+    langs && `LANGUAGES ${langs}`,
     eduMin && `EDU_MIN ${eduMin}`,
-    outcomes && `OUTCOMES ${outcomes}`
+    workMode && `WORKMODE ${workMode}`
   ].filter(Boolean).join(' | ');
 }
 
@@ -100,11 +103,30 @@ function computeOverlaps({ overview, jd }) {
   const eduCand = overview.education?.level ?? null;
   const educationCheck = educationMeets(eduCand, eduMin);
 
-  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs };
+  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills };
+}
+
+async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '') {
+  // For each JD skill not in exact overlap, check embedding similarity with each resume skill; threshold 0.80
+  const exactOverlap = new Set(intersect(resumeSkills, jdSkills, 100));
+  const jdFiltered = (jdSkills || []).filter(s => !exactOverlap.has(normalizeToken(s)));
+  const resumeNorm = (resumeSkills || []).map(normalizeToken).filter(Boolean);
+  const matches = new Set();
+  for (const jdSkill of jdFiltered) {
+    const jdTok = normalizeToken(jdSkill);
+    if (!jdTok) continue;
+    const jdVec = await getEmbedding(jdTok, signalCacheKey('skill', `jd:${jdHash}`, jdTok));
+    for (const cvSkill of resumeNorm) {
+      const cvVec = await getEmbedding(cvSkill, signalCacheKey('skill', `cv:${resumeId}`, cvSkill));
+      const sim = cosine(jdVec, cvVec);
+      if (sim >= 0.80) { matches.add(jdTok); break; }
+    }
+  }
+  return Array.from(matches);
 }
 
 export default async function matchRoute(app) {
-  // OpenAI client not used here; embeddings handled in lib
+  // Ensure API key present for embeddings
   new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   app.post('/v1/match', async (req, reply) => {
@@ -136,7 +158,7 @@ export default async function matchRoute(app) {
       const cos = cosine(rVec, jVec);
       const overlaps = computeOverlaps({ overview, jd });
 
-      // Gates (fail fast to 0)
+      // Gates
       const reasons = { boosts: [], penalties: [], gates: [] };
       const yoeMin = jd.requirements?.yoeMin ?? null;
       const yoe = overview.yoe ?? null;
@@ -170,15 +192,22 @@ export default async function matchRoute(app) {
       if ((overlaps.languagesOverlap || []).length > 0) { score += 5; reasons.boosts.push({ type: 'languages', amount: 5 }); }
       if ((overlaps.achievementsOverlap || []).length > 0) { score += 3; reasons.boosts.push({ type: 'achievements', amount: 3 }); }
 
+      // Soft semantic skill matches (+2 each)
+      const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash);
+      if (softMatches.length > 0) {
+        const amt = softMatches.length * 2;
+        score += amt;
+        reasons.boosts.push({ type: 'soft_skill_matches', amount: amt, matches: softMatches });
+      }
+
       // Penalties
       const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
       if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
       const hasLangReq = (overlaps.jdLangs || []).filter(Boolean).length > 0;
       const langOverlapCount = (overlaps.languagesOverlap || []).length;
       if (hasLangReq && langOverlapCount === 0) { score += -10; reasons.penalties.push({ type: 'language_missing', amount: -10 }); }
-      else if (langOverlapCount > 0) { score += 5; reasons.boosts.push({ type: 'languages', amount: 5 }); }
 
-      // Clamp and respond
+      // Final clamp
       score = Math.max(0, Math.min(100, score));
 
       return reply.send({
@@ -191,7 +220,8 @@ export default async function matchRoute(app) {
             languages: overlaps.languagesOverlap,
             achievementsOverlap: overlaps.achievementsOverlap,
             yoeCheck: overlaps.yoeCheck,
-            educationCheck: overlaps.educationCheck
+            educationCheck: overlaps.educationCheck,
+            softSkillMatches: softMatches
           },
           reasons
         },
