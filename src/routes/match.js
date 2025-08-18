@@ -84,17 +84,6 @@ function computeOverlaps({ overview, jd }) {
 
   const rAch = (overview.topAchievements || []).map(a => a?.text || '').filter(Boolean);
   const jOut = (jd.successSignals?.keyOutcomes || []).map(o => o?.text || '').filter(Boolean);
-  const achievementsOverlap = [];
-  for (const a of rAch) {
-    const an = normalizeToken(a);
-    if (!an) continue;
-    for (const o of jOut) {
-      const on = normalizeToken(o);
-      if (!on) continue;
-      if (an.includes(on) || on.includes(an)) { achievementsOverlap.push(on); break; }
-    }
-    if (achievementsOverlap.length >= 5) break;
-  }
 
   const yoeMin = jd.requirements?.yoeMin ?? null;
   const yoe = overview.yoe ?? null;
@@ -104,7 +93,7 @@ function computeOverlaps({ overview, jd }) {
   const eduCand = overview.education?.level ?? null;
   const educationCheck = educationMeets(eduCand, eduMin);
 
-  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [], resumeAchievements: rAch, jdOutcomes: jOut };
+  return { functionsOverlap, skillsOverlap, languagesOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [], resumeAchievements: rAch, jdOutcomes: jOut };
 }
 
 async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '', threshold = 0.80) {
@@ -143,6 +132,35 @@ async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '
     if (matches.size >= maxTotal) break;
   }
   return Array.from(matches);
+}
+
+// Pairwise semantic matching for achievements (resume) ↔ outcomes (JD)
+async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [], embedFn) {
+  const A = (resumeAchievements || []).map(a => String(a || '').trim()).filter(Boolean);
+  const B = (jdOutcomes || []).map(o => String(o || '').trim()).filter(Boolean);
+  if (!A.length || !B.length) return { pairs: [], boost: 0 };
+
+  const aVecs = await Promise.all(A.map(t => embedFn(t)));
+  const bVecs = await Promise.all(B.map(t => embedFn(t)));
+
+  const pairs = [];
+  const usedB = new Set();
+  for (let i = 0; i < A.length; i++) {
+    let bestJ = -1; let bestCos = -1;
+    for (let j = 0; j < B.length; j++) {
+      if (usedB.has(j)) continue;
+      const cos = cosine(aVecs[i], bVecs[j]);
+      if (cos > bestCos) { bestCos = cos; bestJ = j; }
+    }
+    if (bestJ >= 0 && bestCos >= SOFT_OUTCOME.cosineThreshold) {
+      pairs.push({ resumeAchievement: A[i], jdOutcome: B[bestJ], cosine: Number(bestCos.toFixed(4)) });
+      usedB.add(bestJ);
+    }
+  }
+
+  const rawBoost = pairs.length * (SOFT_OUTCOME.boostPerMatch || 2);
+  const boost = Math.min(rawBoost, SOFT_OUTCOME.maxBoost || 8);
+  return { pairs, boost };
 }
 
 export default async function matchRoute(app) {
@@ -209,7 +227,7 @@ export default async function matchRoute(app) {
       if ((overlaps.functionsOverlap || []).length > 0) { score += BOOSTS.functions; reasons.boosts.push({ type: 'functions', amount: BOOSTS.functions }); }
       if ((overlaps.skillsOverlap || []).length > 0)    { score += BOOSTS.skills; reasons.boosts.push({ type: 'skills', amount: BOOSTS.skills }); }
       if ((overlaps.languagesOverlap || []).length > 0) { score += BOOSTS.languages; reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages }); }
-      if ((overlaps.achievementsOverlap || []).length > 0) { score += BOOSTS.achievements; reasons.boosts.push({ type: 'achievements', amount: BOOSTS.achievements }); }
+      // achievements handled via semantic outcome matching below
 
       // Soft semantic skill matches (+2 each, capped)
       const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
@@ -226,12 +244,9 @@ export default async function matchRoute(app) {
         if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'soft_function_matches', amount: amtF, matches: softFuncMatches }); }
       }
 
-      // Soft semantic outcome matches (JD outcomes vs CV achievements)
-      const softOutcomeMatches = await softStringMatches(overlaps.resumeAchievements, overlaps.jdOutcomes, 'outcome', resumeId, jdHash, SOFT_OUTCOME.cosineThreshold, Math.ceil(SOFT_OUTCOME.maxTotal / SOFT_OUTCOME.perMatch) * 10);
-      if (softOutcomeMatches.length > 0) {
-        const amtO = Math.min(softOutcomeMatches.length * SOFT_OUTCOME.perMatch, SOFT_OUTCOME.maxTotal);
-        if (amtO > 0) { score += amtO; reasons.boosts.push({ type: 'soft_outcome_matches', amount: amtO, matches: softOutcomeMatches }); }
-      }
+      // Semantic outcome matches (JD outcomes vs CV achievements) - source of truth
+      const { pairs: outcomePairs, boost: outcomeBoost } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
+      if (outcomeBoost > 0) { score += outcomeBoost; reasons.boosts.push({ type: 'outcomes_semantic', amount: outcomeBoost, matches: outcomePairs }); }
 
       // Penalties
       const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
@@ -251,12 +266,12 @@ export default async function matchRoute(app) {
             functions: overlaps.functionsOverlap,
             skills: overlaps.skillsOverlap,
             languages: overlaps.languagesOverlap,
-            achievementsOverlap: overlaps.achievementsOverlap,
+            achievementsOverlap: outcomePairs,
             yoeCheck: overlaps.yoeCheck,
             educationCheck: overlaps.educationCheck,
             softSkillMatches: softMatches,
             softFunctionMatches: softFuncMatches,
-            softOutcomeMatches: softOutcomeMatches
+            softOutcomeMatches: outcomePairs
           },
           reasons
         },
