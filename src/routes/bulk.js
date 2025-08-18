@@ -70,8 +70,6 @@ export default async function bulkRoutes(app) {
   // Simple test route - upload PDF and extract text
   app.post("/v1/bulk-test", async (req, reply) => {
     try {
-      console.log('🔍 Testing PDF text extraction...');
-      
       // Read a single file part in a blocking-safe way (same as upload.js)
       const filePart = await req.file();
       if (!filePart) {
@@ -81,12 +79,8 @@ export default async function bulkRoutes(app) {
         });
       }
 
-      console.log(`📁 Filename: ${filePart.filename}`);
-      console.log(`📏 File size: ${filePart.file.bytesRead} bytes`);
-      
       // Convert the file to buffer (same as upload.js)
       const buf = await filePart.toBuffer();
-      console.log(`📏 Buffer size: ${buf.length} bytes`);
       
       // HOIST THESE so they're visible after the inner try/catch:
       let text = '';
@@ -97,16 +91,9 @@ export default async function bulkRoutes(app) {
         const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default;
         const pdfData = await pdf(buf);
         text = pdfData.text || '';
-        console.log(`📝 Extracted text length: ${text.length}`);
-        console.log(`📝 Text preview: ${text.substring(0, 200)}...`);
         
         // Clean up the extracted text with soft line-wrap joining
-        console.log(`🔍 Before normalization - text length: ${text.length}`);
-        console.log(`🔍 Before normalization - first 200 chars: ${text.substring(0, 200)}`);
-        
         text = normalizeCanonicalText(text, { flatten: 'soft' });
-        console.log(`🧹 After normalization - text length: ${text.length}`);
-        console.log(`🧹 After normalization - first 200 chars: ${text.substring(0, 200)}`);
         
         // Optional: JD comparison if jdHash or jdText provided
         const fields = Object.fromEntries(Object.entries(filePart.fields||{}).map(([k,v])=>[k, v?.value]));
@@ -135,15 +122,11 @@ export default async function bulkRoutes(app) {
 
             // 3) similarity
             cosineScore = Number(cosine(rDoc, jdVec).toFixed(4));
-            console.log(`🎯 Cosine similarity: ${cosineScore}`);
           } catch (embedError) {
-            console.error('❌ Embedding failed:', embedError.message);
             // Continue without similarity score
           }
         }
       } catch (pdfError) {
-        console.error('❌ PDF parsing failed:', pdfError.message);
-        
         // Try alternative approach - check if it's a valid PDF first
         if (buf.length < 4 || buf.toString('ascii', 0, 4) !== '%PDF') {
           return reply.code(400).send({
@@ -164,14 +147,11 @@ export default async function bulkRoutes(app) {
         success: true,
         filename: filePart.filename,
         textLength: text.length,
-        preview: flattenForPreview(text).slice(0, 500),
-        fullText: text,
         cosine: cosineScore,             // null if no jdHash/jdText sent
         embeddingModel: getEmbeddingModel()
       });
       
     } catch (e) {
-      console.error('❌ PDF extraction failed:', e.message);
       return reply.code(500).send({ 
         error: "PDF extraction failed",
         message: e.message 
