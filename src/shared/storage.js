@@ -100,11 +100,20 @@ export async function persistStorage() {
 
 // JD storage functions
 export function storeJD(jdHash, jdData) {
-  const jdStorage = resumeStorage.get('jd_cache') || new Map();
-  jdStorage.set(jdHash, {
+  let jdStorage = resumeStorage.get('jd_cache');
+
+  // Normalize to plain object for safe JSON persistence
+  if (jdStorage instanceof Map) {
+    jdStorage = Object.fromEntries(jdStorage);
+  }
+  if (!jdStorage || typeof jdStorage !== 'object') {
+    jdStorage = {};
+  }
+
+  jdStorage[jdHash] = {
     ...jdData,
     timestamp: new Date().toISOString()
-  });
+  };
   resumeStorage.set('jd_cache', jdStorage);
   console.log(`✅ JD cached for hash: ${jdHash}`);
   
@@ -114,10 +123,10 @@ export function storeJD(jdHash, jdData) {
 
 export function getJD(jdHash) {
   const jdStorage = resumeStorage.get('jd_cache');
-  if (!jdStorage || !(jdStorage instanceof Map)) {
-    return null;
-  }
-  return jdStorage.get(jdHash);
+  if (!jdStorage) return null;
+  if (jdStorage instanceof Map) return jdStorage.get(jdHash) || null;
+  if (typeof jdStorage === 'object') return jdStorage[jdHash] || null;
+  return null;
 }
 
 export function hasFreshJD(jdHash) {
@@ -134,16 +143,16 @@ export function hasFreshJD(jdHash) {
 
 export function getAllJDHashes() {
   const jdStorage = resumeStorage.get('jd_cache');
-  if (!jdStorage || !(jdStorage instanceof Map)) {
-    return [];
-  }
-  return Array.from(jdStorage.keys());
+  if (!jdStorage) return [];
+  if (jdStorage instanceof Map) return Array.from(jdStorage.keys());
+  if (typeof jdStorage === 'object') return Object.keys(jdStorage);
+  return [];
 }
 
 export function getJDStorageSize() {
   const jdStorage = resumeStorage.get('jd_cache');
-  if (!jdStorage || !(jdStorage instanceof Map)) {
-    return 0;
-  }
-  return jdStorage.size;
+  if (!jdStorage) return 0;
+  if (jdStorage instanceof Map) return jdStorage.size;
+  if (typeof jdStorage === 'object') return Object.keys(jdStorage).length;
+  return 0;
 }
