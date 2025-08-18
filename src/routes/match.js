@@ -93,7 +93,7 @@ async function softStringMatches(
   cachePrefix = '',
   leftId = '',
   rightId = '',
-  threshold = 0.0,         // ignored now; we return top-1 regardless
+  threshold = 0.0,         // ignored now; we return all pairs
   maxTotal = 100           // keep high so we don't truncate
 ) {
   const normTok = (s) => normalizeToken(s);
@@ -117,7 +117,7 @@ async function softStringMatches(
     }
   }
 
-  // 2) For remaining JD terms, pick best semantic left (top-1)
+  // 2) For remaining JD terms, get ALL semantic matches (not just top-1)
   if (!L.length || !Rremaining.length) return exactPairs;
 
   const lVecs = Object.create(null);
@@ -140,13 +140,12 @@ async function softStringMatches(
   const matches = [...exactPairs];
   for (const r of Rremaining) {
     const rVec = await getRightVec(r.tok);
-    let best = null;
+    // Get ALL semantic matches for this JD term
     for (const lTok of L) {
       const lVec = await getLeftVec(lTok);
       const c = cosine(rVec, lVec);
-      if (!best || c > best.cosine) best = { left: lTok, right: r.original, cosine: Number(c.toFixed(4)), kind: 'semantic' };
+      matches.push({ left: lTok, right: r.original, cosine: Number(c.toFixed(4)), kind: 'semantic' });
     }
-    if (best) matches.push(best);
     if (matches.length >= maxTotal) break;
   }
 
