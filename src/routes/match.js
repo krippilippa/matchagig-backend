@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { getResume, getJD } from '../shared/storage.js';
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
 import { normalizeToken, intersect, educationRank, educationMeets, anyContainsAny } from '../lib/text.js';
-import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL } from '../config/match-weights.js';
+import { COSINE_WEIGHT, BOOSTS, PENALTIES, GATES, SOFT_SKILL, SOFT_FUNC, SOFT_INDUSTRY } from '../config/match-weights.js';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -104,11 +104,10 @@ function computeOverlaps({ overview, jd }) {
   const eduCand = overview.education?.level ?? null;
   const educationCheck = educationMeets(eduCand, eduMin);
 
-  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills };
+  return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs, resumeSkills, jdSkills, resumeFunctions: overview.functions || [], jdFunctions: jd.roleOrg?.functions || [], jdIndustries: jd.successSignals?.industryHints || [] };
 }
 
 async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '', jdHash = '', threshold = 0.80) {
-  // For each JD skill not in exact overlap, check embedding similarity with each resume skill; threshold 0.80
   const exactOverlap = new Set(intersect(resumeSkills, jdSkills, 100));
   const jdFiltered = (jdSkills || []).filter(s => !exactOverlap.has(normalizeToken(s)));
   const resumeNorm = (resumeSkills || []).map(normalizeToken).filter(Boolean);
@@ -126,8 +125,27 @@ async function softSkillMatches(resumeSkills = [], jdSkills = [], resumeId = '',
   return Array.from(matches);
 }
 
+async function softStringMatches(resumeTerms = [], jdTerms = [], cachePrefix = '', leftId = '', rightId = '', threshold = 0.50, maxTotal = 4) {
+  const exact = new Set(intersect(resumeTerms, jdTerms, 100));
+  const jdFiltered = (jdTerms || []).filter(s => !exact.has(normalizeToken(s)));
+  const resumeNorm = (resumeTerms || []).map(normalizeToken).filter(Boolean);
+  const matches = new Set();
+  for (const jdTerm of jdFiltered) {
+    const jdTok = normalizeToken(jdTerm);
+    if (!jdTok) continue;
+    const jdVec = await getEmbedding(jdTok, signalCacheKey(cachePrefix, `right:${rightId}`, jdTok));
+    for (const cvTerm of resumeNorm) {
+      const cvTok = normalizeToken(cvTerm);
+      const cvVec = await getEmbedding(cvTok, signalCacheKey(cachePrefix, `left:${leftId}`, cvTok));
+      const sim = cosine(jdVec, cvVec);
+      if (sim >= threshold) { matches.add(jdTok); break; }
+    }
+    if (matches.size >= maxTotal) break;
+  }
+  return Array.from(matches);
+}
+
 export default async function matchRoute(app) {
-  // Ensure API key present for embeddings
   new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   app.post('/v1/match', async (req, reply) => {
@@ -193,13 +211,24 @@ export default async function matchRoute(app) {
       if ((overlaps.languagesOverlap || []).length > 0) { score += BOOSTS.languages; reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages }); }
       if ((overlaps.achievementsOverlap || []).length > 0) { score += BOOSTS.achievements; reasons.boosts.push({ type: 'achievements', amount: BOOSTS.achievements }); }
 
-      // Soft semantic skill matches (+2 each)
+      // Soft semantic skill matches (+2 each, capped via config)
       const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
       if (softMatches.length > 0) {
-        const amt = softMatches.length * BOOSTS.softSkillPerMatch;
+        const amt = Math.min(softMatches.length * BOOSTS.softSkillPerMatch, 6); // cap +6
         score += amt;
         reasons.boosts.push({ type: 'soft_skill_matches', amount: amt, matches: softMatches });
       }
+
+      // Soft semantic function matches (small boost)
+      const softFuncMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, SOFT_FUNC.cosineThreshold, Math.ceil(SOFT_FUNC.maxTotal / SOFT_FUNC.perMatch) * 10);
+      if (softFuncMatches.length > 0) {
+        const amtF = Math.min(softFuncMatches.length * SOFT_FUNC.perMatch, SOFT_FUNC.maxTotal);
+        if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'soft_function_matches', amount: amtF, matches: softFuncMatches }); }
+      }
+
+      // Soft semantic industry matches (JD industries only for now)
+      const softIndMatches = await softStringMatches([], overlaps.jdIndustries, 'industry', resumeId, jdHash, SOFT_INDUSTRY.cosineThreshold, Math.ceil(SOFT_INDUSTRY.maxTotal / SOFT_INDUSTRY.perMatch) * 10);
+      // Note: no resume industries to compare; skip unless you add CV industries later
 
       // Penalties
       const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
@@ -222,7 +251,8 @@ export default async function matchRoute(app) {
             achievementsOverlap: overlaps.achievementsOverlap,
             yoeCheck: overlaps.yoeCheck,
             educationCheck: overlaps.educationCheck,
-            softSkillMatches: softMatches
+            softSkillMatches: softMatches,
+            softFunctionMatches: softFuncMatches
           },
           reasons
         },

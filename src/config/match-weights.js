@@ -23,4 +23,16 @@ export const SOFT_SKILL = {
   cosineThreshold: 0.80, // semantic match threshold for soft skill matches
 };
 
+export const SOFT_FUNC = {
+  cosineThreshold: 0.50,
+  perMatch: 2,
+  maxTotal: 4,
+};
+
+export const SOFT_INDUSTRY = {
+  cosineThreshold: 0.45,
+  perMatch: 2,
+  maxTotal: 4,
+};
+
 
