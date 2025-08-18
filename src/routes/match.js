@@ -195,6 +195,17 @@ export default async function matchRoute(app) {
       const cos = cosine(rVec, jVec);
       const overlaps = computeOverlaps({ overview, jd });
 
+      // Debug inputs for semantic matching
+      if (process.env.DEBUG_MATCH === '1') {
+        console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
+        console.log('[DEBUG] jdFunctions:', overlaps.jdFunctions);
+        console.log('[DEBUG] resumeSkills:', overlaps.resumeSkills);
+        console.log('[DEBUG] jdSkills:', overlaps.jdSkills);
+        console.log('[DEBUG] resumeAchievements:', overlaps.resumeAchievements);
+        console.log('[DEBUG] jdOutcomes:', overlaps.jdOutcomes);
+        console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
+      }
+
       // Gates
       const reasons = { boosts: [], penalties: [], gates: [] };
       const yoeMin = jd.requirements?.yoeMin ?? null;
