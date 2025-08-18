@@ -158,4 +158,51 @@ export default async function bulkRoutes(app) {
       });
     }
   });
+
+  // Bulk processing route for multiple PDFs
+  app.post("/v1/bulk", async (req, reply) => {
+    try {
+      // For now, let's create a simple bulk route that accepts a single file
+      // and processes it, so we can test the basic functionality
+      const filePart = await req.file();
+      if (!filePart) {
+        return reply.code(400).send({ 
+          error: "No file uploaded",
+          message: "Upload a PDF file" 
+        });
+      }
+
+      // Process the single file
+      try {
+        const buf = await filePart.toBuffer();
+        
+        // Extract text
+        const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default;
+        const pdfData = await pdf(buf);
+        let text = pdfData.text || '';
+        
+        // Normalize text
+        text = normalizeCanonicalText(text, { flatten: 'soft' });
+        
+        return reply.send({
+          success: true,
+          filename: filePart.filename,
+          textLength: text.length,
+          message: "Single file processed successfully. Multi-file support coming soon!"
+        });
+        
+      } catch (fileError) {
+        return reply.code(500).send({
+          error: "PDF processing failed",
+          message: fileError.message
+        });
+      }
+      
+    } catch (e) {
+      return reply.code(500).send({ 
+        error: "Bulk processing failed",
+        message: e.message 
+      });
+    }
+  });
 }
