@@ -206,9 +206,13 @@ export default async function matchRoute(app) {
       const overview = resumeData.overview;
       const jd = jdData.jd;
 
+      // Check if full text matching is available
+      const hasFullText = resumeData.canonicalText && jdData.metadata?.jdText;
+
       const resumeSignal = buildResumeSignal(overview);
       const jdSignal = buildJdSignal(jd);
 
+      // Get embeddings for structured signals
       const [rVec, jVec] = await Promise.all([
         getEmbedding(resumeSignal, signalCacheKey('resume', resumeId, resumeSignal)),
         getEmbedding(jdSignal, signalCacheKey('jd', jdHash, jdSignal))
@@ -216,6 +220,22 @@ export default async function matchRoute(app) {
 
       const cos = cosine(rVec, jVec);
       const overlaps = computeOverlaps({ overview, jd });
+
+      // Get full text embeddings if available
+      let fullTextCosine = null;
+      if (resumeData.canonicalText && jdData.metadata?.jdText) {
+        const resumeFullText = resumeData.canonicalText;
+        const jdFullText = jdData.metadata.jdText;
+        console.log('[DEBUG] Full text matching - Resume length:', resumeFullText.length, 'JD length:', jdFullText.length);
+        
+        const [resumeFullVec, jdFullVec] = await Promise.all([
+          getEmbedding(resumeFullText, signalCacheKey('resume_full', resumeId, resumeFullText.substring(0, 100))),
+          getEmbedding(jdFullText, signalCacheKey('jd_full', jdHash, jdFullText.substring(0, 100)))
+        ]);
+        
+        fullTextCosine = cosine(resumeFullVec, jdFullVec);
+        console.log('[DEBUG] Full text cosine:', fullTextCosine);
+      }
 
       // Debug inputs for semantic matching
       console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
@@ -241,6 +261,7 @@ export default async function matchRoute(app) {
         jdHash,
         breakdown: {
           cosine: Number(cos.toFixed(4)),
+          fullTextCosine: fullTextCosine ? Number(fullTextCosine.toFixed(4)) : null,
           overlaps: {
             functions: funcMatches,
             skills: skillMatches,
