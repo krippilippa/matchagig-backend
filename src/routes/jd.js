@@ -102,7 +102,7 @@ Schema:
 Rules:
 - topHardSkills: list 3–8 tools/platforms/technical competencies explicitly required or preferred (e.g., Salesforce, Excel, SAP, SQL, LinkedIn). Include broad technical domains if phrased as such (e.g., 'IT technologies', 'software development terms'). Exclude soft skills.
 - keyOutcomes: 3–5 verb-led clauses; remove filler ('help/ensure/facilitate'); keep wording close, no numbers/units. Make them concise and action-focused (e.g., "Identify & engage prospects", "Run qualification calls", "Coordinate onboarding comms").
-- industryHints: up to 3 generic sectors mentioned as context/targets (e.g., "Retail", "Financial Services", "Healthcare"). Use generic names, Title Case. Map "Software" to "Technology" to avoid redundancy with "Information Technology".
+- industryHints: return 1–3 distinct, generic sectors explicitly mentioned or clearly implied (e.g., "Retail", "Financial Services", "Staffing and Recruiting"). Do not collapse different industries into one broad word like "Technology". If the JD text gives multiple distinct domains (e.g., IT plus Staffing), keep them as separate items. Prefer multi-word industry labels exactly as they appear (e.g., "Staffing and Recruiting") over shortened forms like "Recruitment". Always return at least two if the JD text provides them.
 - JSON only.
 
 Text:
