@@ -1,6 +1,7 @@
 // routes/match.js
 import OpenAI from 'openai';
 import crypto from 'crypto';
+import { getResume, getJD } from '../shared/storage.js';
 
 // Optional: wire to your storage if you want server-side fetch.
 // For the demo, we accept the already-parsed JSONs in the request body.
@@ -168,19 +169,44 @@ export default async function matchRoute(app) {
     try {
       const body = await req.body;
 
-      // Expect parsed JSONs provided by the client (keeps this route fast & deterministic)
-      const overview = body?.overview; // résumé overview JSON from /v1/overview
-      const jd = body?.jd;             // JD JSON from /v1/jd
+      // Accept IDs instead of full JSON objects
+      const resumeId = body?.resumeId; // résumé ID from /v1/overview
+      const jdHash = body?.jdHash;     // JD hash from /v1/jd
 
-      if (!overview || !jd) {
+      if (!resumeId || !jdHash) {
         return reply.code(400).send({
           error: { code: 'BAD_REQUEST',
-          message: 'Required: { overview, jd } — pass the parsed JSON objects from /v1/overview and /v1/jd.' }
+          message: 'Required: { resumeId, jdHash } — pass the IDs from /v1/overview and /v1/jd.' }
         });
       }
 
-      const resumeSignal = buildResumeSignal(overview);
-      const jdSignal = buildJdSignal(jd);
+      // Fetch the data from storage
+      const resumeData = getResume(resumeId);
+      if (!resumeData) {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND',
+          message: `Resume not found with ID: ${resumeId}` }
+        });
+      }
+
+      const jdData = getJD(jdHash);
+      if (!jdData) {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND',
+          message: `JD not found with hash: ${jdHash}` }
+        });
+      }
+
+      // Check if overview exists for the resume
+      if (!resumeData.overview) {
+        return reply.code(400).send({
+          error: { code: 'BAD_REQUEST',
+          message: `Resume ${resumeId} has no overview. Generate overview first using /v1/overview.` }
+        });
+      }
+
+      const resumeSignal = buildResumeSignal(resumeData.overview);
+      const jdSignal = buildJdSignal(jdData.jd);
 
       const [rVec, jVec] = await Promise.all([
         getEmbedding(openai, resumeSignal),
@@ -188,11 +214,13 @@ export default async function matchRoute(app) {
       ]);
 
       const cos = cosine(rVec, jVec);
-      const overlap = intersections({ resume: overview, jd });
+      const overlap = intersections({ resume: resumeData.overview, jd: jdData.jd });
 
       const score = boostedScore(cos, overlap);
 
       return reply.send({
+        resumeId,
+        jdHash,
         score,
         breakdown: {
           cosine: Number(cos.toFixed(4)),
