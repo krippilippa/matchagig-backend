@@ -41,7 +41,10 @@ async function saveToDisk() {
 }
 
 // Initialize storage on module load
-loadFromDisk();
+loadFromDisk().then(() => {
+  // List all resumes when backend starts
+  listAllResumes();
+});
 
 // Helper functions for storage operations
 export function storeResume(resumeId, resumeData) {
@@ -96,6 +99,56 @@ export function hasFreshOverview(resumeId) {
 // Manual save function (for explicit saves)
 export async function persistStorage() {
   await saveToDisk();
+}
+
+// Clear all storage (resumes and JDs)
+export async function clearAllStorage() {
+  resumeStorage.clear();
+  console.log('🗑️ All storage cleared');
+  await saveToDisk();
+}
+
+// List all resumes with details (called on backend startup)
+function listAllResumes() {
+  const resumeIds = getAllResumeIds();
+  const jdStorage = resumeStorage.get('jd_cache');
+  const jdCount = jdStorage ? (jdStorage instanceof Map ? jdStorage.size : Object.keys(jdStorage).length) : 0;
+  
+  console.log('\n📊 Storage Status on Startup:');
+  console.log(`📁 Resumes: ${resumeIds.length}`);
+  console.log(`📋 JDs: ${jdCount}`);
+  
+  if (resumeIds.length > 0) {
+    console.log('\n📄 Resume Details:');
+    resumeIds.forEach(resumeId => {
+      const resume = resumeStorage.get(resumeId);
+      const hasOverview = resume?.overview ? '✅' : '❌';
+      const hasCanonicalText = resume?.canonicalText ? '✅' : '❌';
+      const name = resume?.name || 'Unnamed';
+      const overviewAge = resume?.overviewTimestamp ? 
+        Math.round((Date.now() - new Date(resume.overviewTimestamp).getTime()) / (1000 * 60 * 60)) + 'h ago' : 
+        'Never';
+      
+      console.log(`  ${resumeId} | ${name} | Overview: ${hasOverview} | Text: ${hasCanonicalText} | Age: ${overviewAge}`);
+    });
+  }
+  
+  if (jdCount > 0) {
+    console.log('\n📋 JD Details:');
+    const jdHashes = jdStorage instanceof Map ? Array.from(jdStorage.keys()) : Object.keys(jdStorage);
+    jdHashes.forEach(jdHash => {
+      const jd = jdStorage instanceof Map ? jdStorage.get(jdHash) : jdStorage[jdHash];
+      const hasFullText = jd?.metadata?.jdText ? '✅' : '❌';
+      const title = jd?.jd?.roleOrg?.title || 'Untitled';
+      const age = jd?.timestamp ? 
+        Math.round((Date.now() - new Date(jd.timestamp).getTime()) / (1000 * 60 * 60)) + 'h ago' : 
+        'Unknown';
+      
+      console.log(`  ${jdHash} | ${title} | Full Text: ${hasFullText} | Age: ${age}`);
+    });
+  }
+  
+  console.log(''); // Empty line for readability
 }
 
 // JD storage functions
