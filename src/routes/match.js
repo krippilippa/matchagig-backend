@@ -93,7 +93,7 @@ async function softStringMatches(
   cachePrefix = '',
   leftId = '',
   rightId = '',
-  threshold = 0.0,         // ignored now; we return all pairs
+  threshold = 0.0,         // ignored now; we return top-1 per JD term
   maxTotal = 100           // keep high so we don't truncate
 ) {
   const normTok = (s) => normalizeToken(s);
@@ -117,7 +117,7 @@ async function softStringMatches(
     }
   }
 
-  // 2) For remaining JD terms, get ALL semantic matches (not just top-1)
+  // 2) For remaining JD terms, get TOP-1 semantic match per JD term
   if (!L.length || !Rremaining.length) return exactPairs;
 
   const lVecs = Object.create(null);
@@ -140,12 +140,16 @@ async function softStringMatches(
   const matches = [...exactPairs];
   for (const r of Rremaining) {
     const rVec = await getRightVec(r.tok);
-    // Get ALL semantic matches for this JD term
+    // Get TOP-1 semantic match for this JD term
+    let best = null;
     for (const lTok of L) {
       const lVec = await getLeftVec(lTok);
       const c = cosine(rVec, lVec);
-      matches.push({ left: r.original, right: lTok, cosine: Number(c.toFixed(4)), kind: 'semantic' });
+      if (!best || c > best.cosine) {
+        best = { left: r.original, right: lTok, cosine: Number(c.toFixed(4)), kind: 'semantic' };
+      }
     }
+    if (best) matches.push(best);
     if (matches.length >= maxTotal) break;
   }
 
@@ -166,12 +170,16 @@ async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [
   const bVecs = await Promise.all(B.map(t => embedFn(t)));
 
   const pairs = [];
-  // Get ALL possible pairs between achievements and outcomes
-  for (let i = 0; i < A.length; i++) {
-    for (let j = 0; j < B.length; j++) {
+  // Get TOP-1 match per JD outcome
+  for (let j = 0; j < B.length; j++) {
+    let best = null;
+    for (let i = 0; i < A.length; i++) {
       const cos = cosine(aVecs[i], bVecs[j]);
-      pairs.push({ left: B[j], right: A[i], cosine: Number(cos.toFixed(4)), kind: 'semantic' });
+      if (!best || cos > best.cosine) {
+        best = { left: B[j], right: A[i], cosine: Number(cos.toFixed(4)), kind: 'semantic' };
+      }
     }
+    if (best) pairs.push(best);
   }
 
   return { pairs };
