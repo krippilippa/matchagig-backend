@@ -109,9 +109,9 @@ async function softStringMatches(
   for (let i = 0; i < R.length; i++) {
     const rTok = R[i];
     if (Lset.has(rTok)) {
-      // use the original JD term for 'right' to preserve casing
-      const rightOriginal = Rraw[i];
-      exactPairs.push({ left: rTok, right: rightOriginal, cosine: 1.0, kind: 'exact' });
+      // use the original JD term for 'left' to preserve casing
+      const leftOriginal = Rraw[i];
+      exactPairs.push({ left: leftOriginal, right: rTok, cosine: 1.0, kind: 'exact' });
     } else {
       Rremaining.push({ tok: rTok, original: Rraw[i] });
     }
@@ -144,7 +144,7 @@ async function softStringMatches(
     for (const lTok of L) {
       const lVec = await getLeftVec(lTok);
       const c = cosine(rVec, lVec);
-      matches.push({ left: lTok, right: r.original, cosine: Number(c.toFixed(4)), kind: 'semantic' });
+      matches.push({ left: r.original, right: lTok, cosine: Number(c.toFixed(4)), kind: 'semantic' });
     }
     if (matches.length >= maxTotal) break;
   }
@@ -170,7 +170,7 @@ async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [
   for (let i = 0; i < A.length; i++) {
     for (let j = 0; j < B.length; j++) {
       const cos = cosine(aVecs[i], bVecs[j]);
-      pairs.push({ left: A[i], right: B[j], cosine: Number(cos.toFixed(4)), kind: 'semantic' });
+      pairs.push({ left: B[j], right: A[i], cosine: Number(cos.toFixed(4)), kind: 'semantic' });
     }
   }
 
