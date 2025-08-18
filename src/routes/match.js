@@ -223,25 +223,26 @@ export default async function matchRoute(app) {
       // Base score
       let score = Math.round(cos * COSINE_WEIGHT);
 
-      // Boosts
-      if ((overlaps.functionsOverlap || []).length > 0) { score += BOOSTS.functions; reasons.boosts.push({ type: 'functions', amount: BOOSTS.functions }); }
-      if ((overlaps.skillsOverlap || []).length > 0)    { score += BOOSTS.skills; reasons.boosts.push({ type: 'skills', amount: BOOSTS.skills }); }
-      if ((overlaps.languagesOverlap || []).length > 0) { score += BOOSTS.languages; reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages }); }
-      // achievements handled via semantic outcome matching below
-
-      // Soft semantic skill matches (+2 each, capped)
-      const softMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
-      if (softMatches.length > 0) {
-        const amt = Math.min(softMatches.length * BOOSTS.softSkillPerMatch, 6);
-        score += amt;
-        reasons.boosts.push({ type: 'soft_skill_matches', amount: amt, matches: softMatches });
+      // Boosts (semantic-first)
+      // 1) Languages (hard overlap stays)
+      if ((overlaps.languagesOverlap || []).length > 0) {
+        score += BOOSTS.languages;
+        reasons.boosts.push({ type: 'languages', amount: BOOSTS.languages });
       }
 
-      // Soft semantic function matches (small boost)
-      const softFuncMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, SOFT_FUNC.cosineThreshold, Math.ceil(SOFT_FUNC.maxTotal / SOFT_FUNC.perMatch) * 10);
-      if (softFuncMatches.length > 0) {
-        const amtF = Math.min(softFuncMatches.length * SOFT_FUNC.perMatch, SOFT_FUNC.maxTotal);
-        if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'soft_function_matches', amount: amtF, matches: softFuncMatches }); }
+      // 2) Skills → semantic only
+      const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash, SOFT_SKILL.cosineThreshold);
+      if (skillMatches.length > 0) {
+        const amt = Math.min(skillMatches.length * BOOSTS.skills, 10);
+        score += amt;
+        reasons.boosts.push({ type: 'skills_semantic', amount: amt, matches: skillMatches });
+      }
+
+      // 3) Functions → semantic only
+      const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash, SOFT_FUNC.cosineThreshold, Math.ceil(SOFT_FUNC.maxTotal / SOFT_FUNC.perMatch) * 10);
+      if (funcMatches.length > 0) {
+        const amtF = Math.min(funcMatches.length * SOFT_FUNC.perMatch, SOFT_FUNC.maxTotal);
+        if (amtF > 0) { score += amtF; reasons.boosts.push({ type: 'functions_semantic', amount: amtF, matches: funcMatches }); }
       }
 
       // Semantic outcome matches (JD outcomes vs CV achievements) - source of truth
@@ -263,15 +264,12 @@ export default async function matchRoute(app) {
         breakdown: {
           cosine: Number(cos.toFixed(4)),
           overlaps: {
-            functions: overlaps.functionsOverlap,
-            skills: overlaps.skillsOverlap,
+            functions: funcMatches.map(m => m.right),
+            skills: skillMatches,
             languages: overlaps.languagesOverlap,
             achievementsOverlap: outcomePairs,
             yoeCheck: overlaps.yoeCheck,
-            educationCheck: overlaps.educationCheck,
-            softSkillMatches: softMatches,
-            softFunctionMatches: softFuncMatches,
-            softOutcomeMatches: outcomePairs
+            educationCheck: overlaps.educationCheck
           },
           reasons
         },
