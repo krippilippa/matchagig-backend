@@ -3,32 +3,19 @@ import OpenAI from 'openai';
 import crypto from 'crypto';
 import { getResume, getJD } from '../shared/storage.js';
 
-// Optional: wire to your storage if you want server-side fetch.
-// For the demo, we accept the already-parsed JSONs in the request body.
-// import { getResume } from '../shared/storage.js'; // not required here
-
 const EMBED_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
 
-// Simple in-memory cache for embeddings (ok for demo)
-const embedCache = new Map(); // key -> { vec, model, at }
+const embedCache = new Map();
 
-function sha1(s) {
-  return crypto.createHash('sha1').update(s).digest('hex');
-}
+function sha1(s) { return crypto.createHash('sha1').update(s).digest('hex'); }
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   const L = Math.min(a.length, b.length);
-  for (let i = 0; i < L; i++) {
-    const x = a[i], y = b[i];
-    dot += x * y;
-    na += x * x;
-    nb += y * y;
-  }
+  for (let i = 0; i < L; i++) { const x = a[i], y = b[i]; dot += x*y; na += x*x; nb += y*y; }
   return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
-// Normalize helpers
 const norm = s => (s || '').toString().trim();
 const normArr = arr => Array.from(new Set((arr || []).map(x => norm(x).toLowerCase()).filter(Boolean)));
 
@@ -36,6 +23,25 @@ function eduRank(level) {
   const order = ['None','High School','Diploma/Certificate','Associate','Bachelor','Master','PhD/Doctorate'];
   const i = order.indexOf(level || '');
   return i === -1 ? -1 : i;
+}
+
+// Skill canonicalization map (synonyms -> canonical)
+const SKILL_SYNONYMS = {
+  linkedin: ['linkedin', 'li prospecting', 'sales navigator', 'linkedin sales navigator'],
+  crm: ['salesforce','hubspot','pipedrive','zoho crm','crm'],
+  it: ['software development terms','it technologies','information technology','it']
+};
+
+function canonicalizeSkill(raw) {
+  const s = norm(raw).toLowerCase();
+  for (const [canon, variants] of Object.entries(SKILL_SYNONYMS)) {
+    if (variants.includes(s)) return canon; // return canonical token
+  }
+  return s; // fallback to normalized literal
+}
+
+function canonicalizeSkills(arr) {
+  return Array.from(new Set((arr || []).map(canonicalizeSkill).filter(Boolean)));
 }
 
 function buildResumeSignal(overview = {}) {
@@ -48,7 +54,6 @@ function buildResumeSignal(overview = {}) {
   const yoe = overview.yoe != null ? String(overview.yoe) : '';
   const ach = (overview.topAchievements || []).map(a => norm(a?.text)).filter(Boolean);
 
-  // Weighted, labeled, compact; keep under a few KB
   return [
     `TITLE: ${title}`,
     seniority && `SENIORITY: ${seniority}`,
@@ -62,13 +67,8 @@ function buildResumeSignal(overview = {}) {
 }
 
 function buildJdSignal(jd = {}) {
-  const ro = jd.roleOrg || {};
-  const log = jd.logistics || {};
-  const req = jd.requirements || {};
-  const ss = jd.successSignals || {};
-
-  const title = norm(ro.title);
-  const seniority = norm(ro.seniorityHint);
+  const ro = jd.roleOrg || {}; const log = jd.logistics || {}; const req = jd.requirements || {}; const ss = jd.successSignals || {};
+  const title = norm(ro.title); const seniority = norm(ro.seniorityHint);
   const funcs = (ro.functions || []).map(norm);
   const skills = (ss.topHardSkills || []).map(norm);
   const langs = (log.languages || []).map(norm);
@@ -96,13 +96,8 @@ async function getEmbedding(openai, text) {
   const key = `${EMBED_MODEL}:${sha1(text)}`;
   const hit = embedCache.get(key);
   if (hit) return hit.vec;
-
-  const res = await openai.embeddings.create({
-    model: EMBED_MODEL,
-    input: text
-  });
-  const vec = res.data[0].embedding;
-  embedCache.set(key, { vec, model: EMBED_MODEL, at: Date.now() });
+  const res = await openai.embeddings.create({ model: EMBED_MODEL, input: text });
+  const vec = res.data[0].embedding; embedCache.set(key, { vec, model: EMBED_MODEL, at: Date.now() });
   return vec;
 }
 
@@ -111,13 +106,11 @@ function intersections({ resume, jd }) {
   const jFuncs = normArr(jd.roleOrg?.functions);
   const funcHit = rFuncs.filter(x => jFuncs.includes(x));
 
-  const rSkills = normArr(resume.topHardSkills);
-  const jSkills = normArr(jd.successSignals?.topHardSkills);
+  const rSkills = canonicalizeSkills(resume.topHardSkills);
+  const jSkills = canonicalizeSkills(jd.successSignals?.topHardSkills);
   const skillHit = rSkills.filter(x => jSkills.includes(x));
 
-  const rLangs = normArr(
-    (resume.languages || []).map(x => typeof x === 'string' ? x : x?.name)
-  );
+  const rLangs = normArr((resume.languages || []).map(x => typeof x === 'string' ? x : x?.name));
   const jLangs = normArr(jd.logistics?.languages);
   const langHit = rLangs.filter(x => jLangs.includes(x));
 
@@ -125,41 +118,79 @@ function intersections({ resume, jd }) {
   const rAch = (resume.topAchievements || []).map(a => norm(a?.text).toLowerCase()).filter(Boolean);
   const jOut = (jd.successSignals?.keyOutcomes || []).map(o => norm(o?.text).toLowerCase()).filter(Boolean);
   const achHit = [];
-  for (const a of rAch) {
-    if (jOut.some(o => a.includes(o) || o.includes(a))) achHit.push(a);
-  }
+  for (const a of rAch) { if (jOut.some(o => a.includes(o) || o.includes(a))) achHit.push(a); }
 
   // YOE / Education gates
-  const yoeMin = jd.requirements?.yoeMin ?? null;
-  const yoe = resume.yoe ?? null;
+  const yoeMin = jd.requirements?.yoeMin ?? null; const yoe = resume.yoe ?? null;
   const yoeCheck = (yoeMin == null || (yoe != null && yoe >= yoeMin));
 
-  const eduMin = jd.requirements?.educationMin ?? null;
-  const eduCand = resume.education?.level ?? null;
-  const eduCheck = (eduMin == null || eduMin === 'Unknown' || eduMin === 'None'
-    || (eduRank(eduCand) >= eduRank(eduMin)));
+  const eduMin = jd.requirements?.educationMin ?? null; const eduCand = resume.education?.level ?? null;
+  const eduCheck = (eduMin == null || eduMin === 'Unknown' || eduMin === 'None' || (eduRank(eduCand) >= eduRank(eduMin)));
 
-  return {
-    functions: funcHit,
-    skills: skillHit,
-    languages: langHit,
-    achievementsOverlap: achHit,
-    yoeCheck,
-    educationCheck: eduCheck
-  };
+  return { rFuncs, jFuncs, rSkills, jSkills, rLangs, jLangs, funcHit, skillHit, langHit, achHit, yoeCheck, eduCheck };
 }
 
-function boostedScore(cos, overlaps) {
-  let score = Math.max(0, Math.min(100, Math.round(cos * 100)));
+function seniorityPenalty(jdSeniority, cvSeniority) {
+  const j = (jdSeniority || '').toLowerCase();
+  const r = (cvSeniority || '').toLowerCase();
+  if (j === 'mid') {
+    if (r === 'junior') return -12;
+    if (r === 'lead/head' || r === 'director+') return -8;
+  }
+  return 0;
+}
 
-  // Lightweight, explainable boosts (caps keep it sane)
-  score += Math.min(10, overlaps.functions.length * 5); // up to +10
-  score += Math.min(10, overlaps.skills.length * 2);    // up to +10
-  if (overlaps.languages.length > 0) score += 5;        // +5
-  if (overlaps.yoeCheck) score += 10;                   // +10
-  if (overlaps.educationCheck) score += 5;              // +5
+function industryAlignmentBoost(jd, resume) {
+  const inds = (jd.successSignals?.industryHints || []).map(x => norm(x).toLowerCase());
+  if (inds.length === 0) return 0;
+  const employerDesc = norm(resume.employerDescriptor).toLowerCase();
+  const employer = norm(resume.employer).toLowerCase();
+  const texts = [employerDesc, employer, ...(resume.topAchievements || []).map(a => norm(a?.text).toLowerCase())];
+  const anyMatch = inds.some(ind => texts.some(t => t && t.includes(ind)));
+  return anyMatch ? 5 : 0;
+}
 
-  return Math.max(0, Math.min(100, score));
+function languageGatePenalty(jLangs, rLangs) {
+  if ((jLangs || []).length === 0) return 0; // no gate
+  // If JD lists languages and resume doesn't include ANY of them -> -10
+  const hasAny = jLangs.some(l => rLangs.includes(l));
+  return hasAny ? 0 : -10;
+}
+
+function boostedScore(cos, overlaps, jd, resume) {
+  // Base from cosine (weighted 80)
+  let score = Math.round(cos * 80);
+  const reasons = { boosts: [], penalties: [], gates: [] };
+
+  // Functions boost: +5 per match up to +10
+  const funcBoost = Math.min(10, overlaps.funcHit.length * 5);
+  if (funcBoost) { score += funcBoost; reasons.boosts.push({ type: 'functions', amount: funcBoost, matches: overlaps.funcHit }); }
+
+  // Skills boost: +4 per match up to +20 (canonicalized)
+  const skillBoost = Math.min(20, overlaps.skillHit.length * 4);
+  if (skillBoost) { score += skillBoost; reasons.boosts.push({ type: 'skills', amount: skillBoost, matches: overlaps.skillHit }); }
+
+  // Language gate penalty if JD requires languages and resume lacks them
+  const langPenalty = languageGatePenalty(overlaps.jLangs, overlaps.rLangs);
+  if (langPenalty) { score += langPenalty; reasons.penalties.push({ type: 'language_gate', amount: langPenalty }); }
+
+  // Seniority distance penalties (conservative)
+  const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, resume.seniorityHint);
+  if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
+
+  // Industry alignment (light +5 if any match)
+  const indBoost = industryAlignmentBoost(jd, resume);
+  if (indBoost) { score += indBoost; reasons.boosts.push({ type: 'industry', amount: indBoost }); }
+
+  // Skill gate cap: if zero skill overlap, cap at 75
+  if (overlaps.skillHit.length === 0) {
+    if (score > 75) { reasons.gates.push({ type: 'skill_cap', cappedAt: 75 }); }
+    score = Math.min(score, 75);
+  }
+
+  // Clamp 0-100
+  score = Math.max(0, Math.min(100, score));
+  return { score, reasons };
 }
 
 export default async function matchRoute(app) {
@@ -168,42 +199,17 @@ export default async function matchRoute(app) {
   app.post('/v1/match', async (req, reply) => {
     try {
       const body = await req.body;
-
-      // Accept IDs instead of full JSON objects
-      const resumeId = body?.resumeId; // résumé ID from /v1/overview
-      const jdHash = body?.jdHash;     // JD hash from /v1/jd
-
+      const resumeId = body?.resumeId;
+      const jdHash = body?.jdHash;
       if (!resumeId || !jdHash) {
-        return reply.code(400).send({
-          error: { code: 'BAD_REQUEST',
-          message: 'Required: { resumeId, jdHash } — pass the IDs from /v1/overview and /v1/jd.' }
-        });
+        return reply.code(400).send({ error: { code: 'BAD_REQUEST', message: 'Required: { resumeId, jdHash } — pass the IDs from /v1/overview and /v1/jd.' } });
       }
 
-      // Fetch the data from storage
       const resumeData = getResume(resumeId);
-      if (!resumeData) {
-        return reply.code(404).send({
-          error: { code: 'NOT_FOUND',
-          message: `Resume not found with ID: ${resumeId}` }
-        });
-      }
-
+      if (!resumeData) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: `Resume not found with ID: ${resumeId}` } });
       const jdData = getJD(jdHash);
-      if (!jdData) {
-        return reply.code(404).send({
-          error: { code: 'NOT_FOUND',
-          message: `JD not found with hash: ${jdHash}` }
-        });
-      }
-
-      // Check if overview exists for the resume
-      if (!resumeData.overview) {
-        return reply.code(400).send({
-          error: { code: 'BAD_REQUEST',
-          message: `Resume ${resumeId} has no overview. Generate overview first using /v1/overview.` }
-        });
-      }
+      if (!jdData) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: `JD not found with hash: ${jdHash}` } });
+      if (!resumeData.overview) return reply.code(400).send({ error: { code: 'BAD_REQUEST', message: `Resume ${resumeId} has no overview. Generate overview first using /v1/overview.` } });
 
       const resumeSignal = buildResumeSignal(resumeData.overview);
       const jdSignal = buildJdSignal(jdData.jd);
@@ -215,8 +221,7 @@ export default async function matchRoute(app) {
 
       const cos = cosine(rVec, jVec);
       const overlap = intersections({ resume: resumeData.overview, jd: jdData.jd });
-
-      const score = boostedScore(cos, overlap);
+      const { score, reasons } = boostedScore(cos, overlap, jdData.jd, resumeData.overview);
 
       return reply.send({
         resumeId,
@@ -224,22 +229,22 @@ export default async function matchRoute(app) {
         score,
         breakdown: {
           cosine: Number(cos.toFixed(4)),
-          overlaps: overlap
+          overlaps: {
+            functions: overlap.funcHit,
+            skills: overlap.skillHit,
+            languages: overlap.langHit,
+            achievementsOverlap: overlap.achHit,
+            yoeCheck: overlap.yoeCheck,
+            educationCheck: overlap.eduCheck
+          },
+          reasons
         },
-        snippets: {
-          resumeSignal,
-          jdSignal
-        },
-        metadata: {
-          embeddingModel: EMBED_MODEL,
-          timestamp: new Date().toISOString()
-        }
+        snippets: { resumeSignal, jdSignal },
+        metadata: { embeddingModel: EMBED_MODEL, timestamp: new Date().toISOString() }
       });
     } catch (e) {
       req.log.error(e);
-      return reply.code(500).send({
-        error: { code: 'MATCH_ERROR', message: 'Failed to compute match', details: { hint: e.message } }
-      });
+      return reply.code(500).send({ error: { code: 'MATCH_ERROR', message: 'Failed to compute match', details: { hint: e.message } } });
     }
   });
 }
