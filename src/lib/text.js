@@ -1,31 +1,51 @@
-const PUNCT_RE = /[\p{P}\p{S}]+/gu;
-
 export function normalizeToken(s) {
-  if (!s) return '';
-  let t = String(s).toLowerCase().trim();
-  t = t.replace(PUNCT_RE, ' ');
-  t = t.replace(/\s+/g, ' ').trim();
-  // basic plural stripping
-  if (t.endsWith('es')) t = t.slice(0, -2);
-  else if (t.endsWith('s')) t = t.slice(0, -1);
-  return t;
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9+&/#.\- ]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function intersect(a = [], b = [], limit = Infinity) {
-  const A = Array.from(new Set(a.map(normalizeToken).filter(Boolean)));
-  const Bset = new Set(b.map(normalizeToken).filter(Boolean));
+  const Aset = new Set(a.map(normalizeToken).filter(Boolean));
   const out = [];
-  for (const x of A) {
-    if (Bset.has(x)) out.push(x);
-    if (out.length >= limit) break;
+  const seen = new Set();
+  for (const x of b) {
+    const nx = normalizeToken(x);
+    if (!nx || seen.has(nx)) continue;
+    if (Aset.has(nx)) {
+      out.push(nx);
+      seen.add(nx);
+      if (out.length >= limit) break;
+    }
   }
   return out;
 }
 
+const EDU_RANK = {
+  'none': 0,
+  'high school': 1,
+  'diploma/certificate': 2,
+  'associate': 3,
+  'bachelor': 4,
+  'master': 5,
+  'phd/doctorate': 6,
+  null: -1,
+  unknown: -1,
+  '': -1
+};
+
 export function educationRank(level) {
-  const order = ['None','High School','Diploma/Certificate','Associate','Bachelor','Master','PhD/Doctorate'];
-  const i = order.indexOf(level || '');
-  return i === -1 ? -1 : i;
+  if (!level) return -1;
+  const key = String(level).toLowerCase();
+  return EDU_RANK[key] ?? -1;
+}
+
+export function educationMeets(resumeEdu, jdEduMin) {
+  if (!jdEduMin) return true;
+  if (String(jdEduMin).toLowerCase() === 'none') return true;
+  return educationRank(resumeEdu) >= educationRank(jdEduMin);
 }
 
 export function containsAny(haystack = '', needles = []) {

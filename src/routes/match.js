@@ -2,7 +2,7 @@
 import OpenAI from 'openai';
 import { getResume, getJD } from '../shared/storage.js';
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
-import { normalizeToken, intersect, educationRank, anyContainsAny } from '../lib/text.js';
+import { normalizeToken, intersect, educationRank, educationMeets, anyContainsAny } from '../lib/text.js';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -98,7 +98,7 @@ function computeOverlaps({ overview, jd }) {
 
   const eduMin = jd.requirements?.educationMin ?? null;
   const eduCand = overview.education?.level ?? null;
-  const educationCheck = (eduMin == null || educationRank(eduMin) <= educationRank(eduCand));
+  const educationCheck = educationMeets(eduCand, eduMin);
 
   return { functionsOverlap, skillsOverlap, languagesOverlap, achievementsOverlap, yoeCheck, educationCheck, jdLangs };
 }
@@ -173,9 +173,10 @@ export default async function matchRoute(app) {
       // Penalties
       const sPen = seniorityPenalty(jd.roleOrg?.seniorityHint, overview.seniorityHint);
       if (sPen) { score += sPen; reasons.penalties.push({ type: 'seniority_mismatch', amount: sPen }); }
-      if ((overlaps.jdLangs || []).length > 0 && (overlaps.languagesOverlap || []).length === 0) {
-        score += -10; reasons.penalties.push({ type: 'language_missing', amount: -10 });
-      }
+      const hasLangReq = (overlaps.jdLangs || []).filter(Boolean).length > 0;
+      const langOverlapCount = (overlaps.languagesOverlap || []).length;
+      if (hasLangReq && langOverlapCount === 0) { score += -10; reasons.penalties.push({ type: 'language_missing', amount: -10 }); }
+      else if (langOverlapCount > 0) { score += 5; reasons.boosts.push({ type: 'languages', amount: 5 }); }
 
       // Clamp and respond
       score = Math.max(0, Math.min(100, score));
