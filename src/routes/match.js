@@ -166,17 +166,11 @@ async function matchOutcomesSemantically(resumeAchievements = [], jdOutcomes = [
   const bVecs = await Promise.all(B.map(t => embedFn(t)));
 
   const pairs = [];
-  const usedB = new Set();
+  // Get ALL possible pairs between achievements and outcomes
   for (let i = 0; i < A.length; i++) {
-    let bestJ = -1; let bestCos = -1;
     for (let j = 0; j < B.length; j++) {
-      if (usedB.has(j)) continue;
       const cos = cosine(aVecs[i], bVecs[j]);
-      if (cos > bestCos) { bestCos = cos; bestJ = j; }
-    }
-    if (bestJ >= 0) {
-      pairs.push({ left: A[i], right: B[bestJ], cosine: Number(bestCos.toFixed(4)), kind: 'semantic' });
-      usedB.add(bestJ);
+      pairs.push({ left: A[i], right: B[j], cosine: Number(cos.toFixed(4)), kind: 'semantic' });
     }
   }
 
