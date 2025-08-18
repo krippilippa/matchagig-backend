@@ -20,9 +20,9 @@ Schema:
 
 Rules:
 - title: job title as written (trim branding/noise if obvious, e.g., remove emojis/hashtags).
-- seniorityHint: infer from the title wording ONLY (e.g., Assistant=Junior; Manager=Mid/Senior; Senior=Senior; Head/Lead=Lead/Head; Director/VP/CXO=Director+). If unclear → "Unknown".
-- employer: company/org if clearly named; else null.
-- functions: 1–2 generic domains that best describe the core role (e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"). Title Case. If unclear → [].
+- seniorityHint: infer from the title wording ONLY (e.g., Assistant=Junior; Manager=Mid/Senior; Senior=Senior; Head/Lead=Lead/Head; Director/VP/CXO=Director+). If title contains 'Representative/Associate/Executive' without 'Senior/Lead/Director', set seniorityHint = 'Mid'. If unclear → "Unknown".
+- employer: company/org if clearly named; if an 'About <Company>' section exists, set employer to that company name; else null.
+- functions: 1–2 generic domains that best describe the core role (e.g., "Sales", "Operations", "Finance", "Marketing", "HR", "Product", "Engineering", "Customer Success"). Consider 'Account Management' when retention/growth is emphasized. Title Case. If unclear → [].
 - JSON only.
 
 Text:
@@ -49,7 +49,7 @@ Rules:
 - location: copy city/country if explicitly stated; if only one is present, set the other to null. Do not guess.
 - workMode: map explicit wording (e.g., "remote", "hybrid 2 days onsite", "on-site") to one of: Onsite | Hybrid | Remote. If unclear → null.
 - workAuthorization: copy literal requirement if present (e.g., "US work authorization", "EU work permit"); else null.
-- languages: list up to 3 languages explicitly required/preferred; use the language names as written.
+- languages: list up to 3 languages explicitly required/preferred; normalize to Title Case; deduplicate.
 - availability: earliestStart as short text if stated ("Immediate", "ASAP", a month); noticeDays as a number only if a numeric notice period is stated. Unknown → nulls.
 - JSON only.
 
@@ -100,8 +100,8 @@ Schema:
   "industryHints": string[] }
 
 Rules:
-- topHardSkills: list 3–8 tools/platforms/technical competencies explicitly required or preferred (e.g., Salesforce, Excel, SAP, SQL, Tableau). Exclude soft skills.
-- keyOutcomes: up to 5 concise clauses describing outcomes the role is expected to deliver (e.g., "reduce churn", "increase pipeline", "shorten cycle time"). Keep wording close to the JD but remove numbers/units.
+- topHardSkills: only concrete tools/platforms (e.g., Salesforce, HubSpot, Excel, SQL, ATS, Sales Navigator). Exclude umbrella phrases (e.g., 'social platforms', 'IT technologies', 'software development terms'). If none are concrete, return an empty array.
+- keyOutcomes: 3–5 verb-led clauses; remove filler ('help/ensure/facilitate'); keep wording close, no numbers/units.
 - industryHints: up to 3 generic sectors mentioned as context/targets (e.g., "Retail", "Financial Services", "Healthcare"). Use generic names, Title Case.
 - JSON only.
 
