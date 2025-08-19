@@ -8,7 +8,7 @@ import { getJD } from "../shared/storage.js";
 import { buildJdSignal } from "../lib/jd-signal.js";
 
 export default async function bulkZipRoutes(app) {
-  const MAX_FILES_PER_ZIP = Number(process.env.MAX_FILES_PER_ZIP || 50); // Reduced from 500 to 50
+  const MAX_FILES_PER_ZIP = Number(process.env.MAX_FILES_PER_ZIP || 100); // Reduced from 500 to 200
   const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES || (10 * 1024 * 1024)); // 10MB per file
   const MAX_TOTAL_BYTES = Number(process.env.MAX_TOTAL_BYTES || (100 * 1024 * 1024)); // Reduced from 250MB to 100MB
   const CONC = Number(process.env.ZIP_EMBED_CONCURRENCY || 4);
