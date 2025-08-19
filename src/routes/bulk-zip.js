@@ -118,6 +118,8 @@ export default async function bulkZipRoutes(app) {
 
       // Batch embed all resume texts for better performance
       let resumeVectors = [];
+      req.log.info(`Starting batch embedding for ${resumeData.length} resumes with JD vector`);
+      
       if (jdVec && resumeData.length > 0) {
         // Helper functions for text chunking and mean pooling
         function chunkText(text, size = 3000, overlap = 300) {
@@ -145,50 +147,60 @@ export default async function bulkZipRoutes(app) {
         
         for (let i = 0; i < resumeData.length; i += batchSize) {
           const batch = resumeData.slice(i, i + batchSize);
+          req.log.info(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(resumeData.length/batchSize)} (${batch.length} resumes)`);
           
-          // Process each resume in the batch
-          for (const resume of batch) {
+                  // Process each resume in the batch
+        for (const resume of batch) {
+          try {
+            req.log.info(`Processing resume ${resume.resumeId} (${resume.canonical.length} chars)`);
+            
+            // Cap text length and chunk for better embedding quality
+            const cappedText = resume.canonical.length > 12000 ? 
+              resume.canonical.slice(0, 12000) : resume.canonical;
+            
+            // Split into chunks with overlap
+            const chunks = chunkText(cappedText, 3000, 300);
+            req.log.info(`Split into ${chunks.length} chunks for ${resume.resumeId}`);
+            
+            // Get embeddings for all chunks
+            const chunkVectors = await Promise.all(
+              chunks.map((chunk, idx) => 
+                getEmbedding(chunk, signalCacheKey('bulkChunk', resume.resumeId, `${idx}:${chunk.slice(0, 64)}`))
+              )
+            );
+            
+            // Mean pool all chunks into single document vector
+            const docVector = meanPool(chunkVectors);
+            
+            resumeVectors.push({
+              resumeId: resume.resumeId,
+              vector: docVector
+            });
+            
+            req.log.info(`Successfully embedded ${resume.resumeId}`);
+          } catch (e) {
+            req.log.warn(`Chunking failed for ${resume.resumeId}, trying fallback: ${e.message}`);
+            // If chunking fails, fall back to simple approach
             try {
-              // Cap text length and chunk for better embedding quality
-              const cappedText = resume.canonical.length > 12000 ? 
-                resume.canonical.slice(0, 12000) : resume.canonical;
-              
-              // Split into chunks with overlap
-              const chunks = chunkText(cappedText, 3000, 300);
-              
-              // Get embeddings for all chunks
-              const chunkVectors = await Promise.all(
-                chunks.map((chunk, idx) => 
-                  getEmbedding(chunk, signalCacheKey('bulkChunk', resume.resumeId, `${idx}:${chunk.slice(0, 64)}`))
-                )
+              const simpleVector = await getEmbedding(
+                resume.canonical.slice(0, 8000), 
+                signalCacheKey('bulkDoc', resume.resumeId, resume.canonical.slice(0, 64))
               );
-              
-              // Mean pool all chunks into single document vector
-              const docVector = meanPool(chunkVectors);
-              
               resumeVectors.push({
                 resumeId: resume.resumeId,
-                vector: docVector
+                vector: simpleVector
               });
-            } catch (e) {
-              // If chunking fails, fall back to simple approach
-              try {
-                const simpleVector = await getEmbedding(
-                  resume.canonical.slice(0, 8000), 
-                  signalCacheKey('bulkDoc', resume.resumeId, resume.canonical.slice(0, 64))
-                );
-                resumeVectors.push({
-                  resumeId: resume.resumeId,
-                  vector: simpleVector
-                });
-              } catch (fallbackError) {
-                // Skip this resume if all embedding attempts fail
-                console.warn(`Failed to embed resume ${resume.resumeId}:`, fallbackError.message);
-              }
+              req.log.info(`Fallback embedding successful for ${resume.resumeId}`);
+            } catch (fallbackError) {
+              // Skip this resume if all embedding attempts fail
+              req.log.error(`Failed to embed resume ${resume.resumeId}: ${fallbackError.message}`);
             }
           }
         }
+        }
       }
+
+      req.log.info(`Embedding completed. Generated ${resumeVectors.length} vectors out of ${resumeData.length} resumes`);
 
       // Build results with cosine scores
       const results = resumeData.map((r) => {
