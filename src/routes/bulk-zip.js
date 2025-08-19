@@ -33,8 +33,11 @@ function makeResumeIdFromText(text) {
 export default async function bulkZipRoutes(app) {
   app.post('/v1/bulk-zip', async (req, reply) => {
     try {
-      const mp = await req.multipart();
-      if (!mp) return reply.code(400).send({ error: 'multipart required' });
+      // Check content type
+      const ctype = req.headers['content-type'] || '';
+      if (!ctype.includes('multipart/form-data')) {
+        return reply.code(415).send({ error: 'UNSUPPORTED_MEDIA_TYPE', message: 'Use multipart/form-data' });
+      }
 
       let zipBuf = null;
       let jdHash = null;
@@ -42,18 +45,24 @@ export default async function bulkZipRoutes(app) {
       let wantCanonicalText = true;
       let topN = null;
 
-      for await (const part of mp) {
-        if (part.type === 'file' && part.fieldname === 'zip') {
-          const chunks = [];
-          for await (const chunk of part.file) chunks.push(chunk);
-          zipBuf = Buffer.concat(chunks);
-        } else if (part.type === 'field') {
-          if (part.fieldname === 'jdHash') jdHash = (part.value || '').trim() || null;
-          if (part.fieldname === 'jdText') jdText = (part.value || '').trim() || null;
-          if (part.fieldname === 'wantCanonicalText') wantCanonicalText = (String(part.value).toLowerCase() === 'true');
-          if (part.fieldname === 'topN') topN = Math.max(1, Math.min(1000, parseInt(part.value, 10) || 0)) || null;
-        }
+      // Read file part
+      const filePart = await req.file();
+      if (!filePart) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'No file provided' });
       }
+
+      if (filePart.fieldname === 'zip') {
+        zipBuf = await filePart.toBuffer();
+      } else {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Send file field named "zip"' });
+      }
+
+      // Read other fields
+      const fields = filePart.fields || {};
+      if (fields.jdHash) jdHash = (fields.jdHash.value || '').trim() || null;
+      if (fields.jdText) jdText = (fields.jdText.value || '').trim() || null;
+      if (fields.wantCanonicalText) wantCanonicalText = (String(fields.wantCanonicalText.value).toLowerCase() === 'true');
+      if (fields.topN) topN = Math.max(1, Math.min(1000, parseInt(fields.topN.value, 10) || 0)) || null;
 
       if (!zipBuf) {
         return reply.code(400).send({ error: 'No zip uploaded (field "zip")' });
@@ -121,13 +130,41 @@ export default async function bulkZipRoutes(app) {
 
       const limited = topN ? results.slice(0, topN) : results;
 
-      return reply.send({
+      // Add JD information to response
+      const response = {
         uploadId: `uz_${Math.random().toString(36).slice(2, 8)}`,
         jdMode,
         embeddingModel: getEmbeddingModel(),
         count: results.length,
         results: limited
-      });
+      };
+
+      // Include JD details if JD was provided
+      if (jdHash || jdText) {
+        let jdRecord = null;
+        let actualJdHash = null;
+
+        if (jdHash) {
+          jdRecord = getJD(jdHash);
+          actualJdHash = jdHash;
+        }
+        
+        if (!jdRecord && jdText) {
+          // Parse JD text to get structured data
+          const { parseAndCacheJD } = await import('../lib/jd-parser.js');
+          const parsed = await parseAndCacheJD(jdText);
+          actualJdHash = parsed.jdHash;
+          jdRecord = getJD(actualJdHash);
+        }
+
+        if (jdRecord) {
+          response.jdHash = actualJdHash;
+          response.jd = jdRecord.jd;
+          response.jdCanonicalText = jdRecord.metadata?.jdText || '';
+        }
+      }
+
+      return reply.send(response);
     } catch (e) {
       req.log.error(e);
       return reply.code(500).send({ error: 'BULK_ZIP_FAILED', message: e.message });
