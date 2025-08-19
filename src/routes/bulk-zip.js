@@ -1,6 +1,6 @@
 // routes/bulk-zip.js - ZIP-based bulk resume processing
 import unzipper from "unzipper";
-import { extractCanonicalText } from "../lib/extract.js";
+import { extractCanonicalText, getQualityMetrics, resetQualityMetrics } from "../lib/extract.js";
 import { normalizeCanonicalText, flattenForPreview } from "../lib/canon.js";
 import { embedMany, embedDocument, cosine } from "../lib/emb-bulk.js";
 import { getEmbeddingModel } from "../lib/embeddings.js";
@@ -59,6 +59,7 @@ export default async function bulkZipRoutes(app) {
       const allItems = [];
       const totalFiles = picked.length;
       const numBatches = Math.ceil(totalFiles / BATCH_SIZE);
+      const batchQualityMetrics = [];
 
       console.log(`🚀 Processing ${totalFiles} files in ${numBatches} batches of ${BATCH_SIZE}`);
 
@@ -69,26 +70,53 @@ export default async function bulkZipRoutes(app) {
         
         console.log(`📦 Processing batch ${batchNum + 1}/${numBatches} (files ${startIdx + 1}-${endIdx})`);
 
+        // Reset quality metrics for this batch
+        resetQualityMetrics();
+
         // Process this batch
         const batchItems = [];
         for (const e of batchFiles) {
           try {
             const buf = await e.buffer();
-            let text = await extractCanonicalText(buf, e.path);
-            if (text) text = normalizeCanonicalText(text, { flatten: 'soft' });
+            const extractResult = await extractCanonicalText(buf, e.path);
+            
+            if (!extractResult) {
+              batchItems.push({
+                filename: e.path.split("/").pop(),
+                status: "no_text",
+                text: "",
+                textChars: 0,
+                preview: "<< no extractable text >>",
+                bytes: buf.length,
+                quality: { score: 0, extractionMethod: "none" },
+                warnings: 0
+              });
+              continue;
+            }
 
-            const len = text?.length || 0;
-            const letters = (text?.match(/[A-Za-zÀ-ÖØ-öø-ÿ0-9]/g) || []).length;
+            // Handle new metadata format
+            const { text, quality: q, extractionMethod, warnings } = extractResult;
+            let normalizedText = "";
+            
+            if (text) {
+              normalizedText = normalizeCanonicalText(text, { flatten: 'soft' });
+            }
+
+            const len = normalizedText?.length || 0;
+            const letters = (normalizedText?.match(/[A-Za-zÀ-ÖØ-öø-ÿ0-9]/g) || []).length;
             const ratio = len ? (letters / len) : 0;
             const ok = len >= 200 && ratio >= 0.2;
 
             batchItems.push({
               filename: e.path.split("/").pop(),
               status: ok ? "ok" : "no_text",
-              text: ok ? text : "",
+              text: ok ? normalizedText : "",
               textChars: len,
-              preview: ok ? flattenForPreview(text).slice(0, 240) : "<< no extractable text >>",
-              bytes: buf.length
+              preview: ok ? flattenForPreview(normalizedText).slice(0, 240) : "<< no extractable text >>",
+              bytes: buf.length,
+              quality: q,
+              extractionMethod,
+              warnings
             });
           } catch (fileError) {
             console.warn(`⚠️ Failed to process ${e.path}: ${fileError.message}`);
@@ -98,12 +126,22 @@ export default async function bulkZipRoutes(app) {
               text: "",
               textChars: 0,
               preview: `<< processing error: ${fileError.message} >>`,
-              bytes: 0
+              bytes: 0,
+              quality: { score: 0, extractionMethod: "error" },
+              warnings: 0
             });
           }
         }
 
         allItems.push(...batchItems);
+        
+        // Collect quality metrics for this batch
+        const batchMetrics = getQualityMetrics();
+        batchQualityMetrics.push({
+          batch: batchNum + 1,
+          ...batchMetrics
+        });
+        
         console.log(`✅ Batch ${batchNum + 1} complete: ${batchItems.length} files processed`);
       }
 
@@ -159,12 +197,39 @@ export default async function bulkZipRoutes(app) {
         textChars: it.textChars,
         preview: it.preview,
         bytes: it.bytes,
+        quality: it.quality,
+        extractionMethod: it.extractionMethod,
+        warnings: it.warnings,
         cosine: cosines ? cosines[i] : null
       }));
 
       if (cosines) {
         out.sort((a, b) => (b.cosine ?? -1) - (a.cosine ?? -1));
       }
+
+      // Calculate overall quality statistics
+      const qualityStats = {
+        totalFiles: allItems.length,
+        successful: allItems.filter(x => x.status === "ok").length,
+        failed: allItems.filter(x => x.status === "error").length,
+        noText: allItems.filter(x => x.status === "no_text").length,
+        averageQualityScore: Math.round(
+          allItems.filter(x => x.quality?.score).reduce((sum, x) => sum + x.quality.score, 0) / 
+          allItems.filter(x => x.quality?.score).length
+        ),
+        qualityDistribution: {
+          excellent: allItems.filter(x => x.quality?.score >= 80).length,
+          good: allItems.filter(x => x.quality?.score >= 60 && x.quality?.score < 80).length,
+          fair: allItems.filter(x => x.quality?.score >= 40 && x.quality?.score < 60).length,
+          poor: allItems.filter(x => x.quality?.score < 40).length
+        },
+        extractionMethods: allItems.reduce((acc, x) => {
+          const method = x.extractionMethod || "unknown";
+          acc[method] = (acc[method] || 0) + 1;
+          return acc;
+        }, {}),
+        totalWarnings: allItems.reduce((sum, x) => sum + (x.warnings || 0), 0)
+      };
 
       const response = {
         count: allItems.length,
@@ -174,10 +239,13 @@ export default async function bulkZipRoutes(app) {
         jdUsed: Boolean(jdHash || jdText),
         jdMode,
         embeddingModel: getEmbeddingModel(),
+        qualityStats,
+        batchQualityMetrics,
         results: out.slice(0, topN)
       };
 
       console.log(`🎉 Bulk processing complete: ${allItems.length} files processed, ${out.filter(x => x.status === "ok").length} successful`);
+      console.log(`📊 Quality Summary: ${qualityStats.averageQualityScore}/100 avg score, ${qualityStats.totalWarnings} total warnings`);
       return reply.send(response);
 
     } catch (e) {
