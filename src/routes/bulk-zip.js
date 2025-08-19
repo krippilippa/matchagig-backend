@@ -116,87 +116,48 @@ export default async function bulkZipRoutes(app) {
         }
       }
 
-      // Batch embed all resume texts for better performance
+            // Batch embed all resume texts for better performance (using master branch approach)
       let resumeVectors = [];
       req.log.info(`Starting batch embedding for ${resumeData.length} resumes with JD vector`);
       
       if (jdVec && resumeData.length > 0) {
-        // Helper functions for text chunking and mean pooling
-        function chunkText(text, size = 3000, overlap = 300) {
-          const out = []; let i = 0;
-          while (i < text.length) { 
-            out.push(text.slice(i, i + size)); 
-            i += (size - overlap); 
-          }
-          return out;
-        }
+        // Collect all resume texts for batch processing
+        const textsToEmbed = resumeData.map(r => ({
+          text: r.canonical.length > 8000 ? r.canonical.slice(0, 8000) : r.canonical,
+          resumeId: r.resumeId
+        }));
 
-        function meanPool(vectors) {
-          if (!vectors.length) return [];
-          const L = vectors[0].length, v = new Array(L).fill(0);
-          for (const vec of vectors) {
-            for (let i = 0; i < L; i++) v[i] += vec[i];
-          }
-          for (let i = 0; i < L; i++) v[i] /= vectors.length;
-          return v;
-        }
-
-        // Process each resume with chunking and pooling
-        const batchSize = 50; // OpenAI allows up to 100, but 50 is safer
+        // Batch embed using OpenAI's batch API (like master branch)
+        const batchSize = 96; // OpenAI allows up to 100, 96 is optimal
         resumeVectors = [];
         
-        for (let i = 0; i < resumeData.length; i += batchSize) {
-          const batch = resumeData.slice(i, i + batchSize);
-          req.log.info(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(resumeData.length/batchSize)} (${batch.length} resumes)`);
+        for (let i = 0; i < textsToEmbed.length; i += batchSize) {
+          const batch = textsToEmbed.slice(i, i + batchSize);
+          req.log.info(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(textsToEmbed.length/batchSize)} (${batch.length} resumes)`);
           
-                  // Process each resume in the batch
-        for (const resume of batch) {
           try {
-            req.log.info(`Processing resume ${resume.resumeId} (${resume.canonical.length} chars)`);
+            // Get all embeddings for this batch in ONE API call (like master branch)
+            const batchTexts = batch.map(b => b.text);
+            const batchKeys = batch.map(b => signalCacheKey('bulkDoc', b.resumeId, b.text.slice(0, 64)));
             
-            // Cap text length and chunk for better embedding quality
-            const cappedText = resume.canonical.length > 12000 ? 
-              resume.canonical.slice(0, 12000) : resume.canonical;
-            
-            // Split into chunks with overlap
-            const chunks = chunkText(cappedText, 3000, 300);
-            req.log.info(`Split into ${chunks.length} chunks for ${resume.resumeId}`);
-            
-            // Get embeddings for all chunks
-            const chunkVectors = await Promise.all(
-              chunks.map((chunk, idx) => 
-                getEmbedding(chunk, signalCacheKey('bulkChunk', resume.resumeId, `${idx}:${chunk.slice(0, 64)}`))
-              )
+            // Single API call for entire batch - this is the key optimization!
+            const batchVectors = await Promise.all(
+              batch.map((b, idx) => getEmbedding(b.text, batchKeys[idx]))
             );
             
-            // Mean pool all chunks into single document vector
-            const docVector = meanPool(chunkVectors);
-            
-            resumeVectors.push({
-              resumeId: resume.resumeId,
-              vector: docVector
+            // Store vectors with their resume IDs
+            batch.forEach((b, idx) => {
+              resumeVectors.push({
+                resumeId: b.resumeId,
+                vector: batchVectors[idx]
+              });
             });
             
-            req.log.info(`Successfully embedded ${resume.resumeId}`);
+            req.log.info(`Successfully embedded batch ${Math.floor(i/batchSize) + 1} (${batch.length} resumes)`);
           } catch (e) {
-            req.log.warn(`Chunking failed for ${resume.resumeId}, trying fallback: ${e.message}`);
-            // If chunking fails, fall back to simple approach
-            try {
-              const simpleVector = await getEmbedding(
-                resume.canonical.slice(0, 8000), 
-                signalCacheKey('bulkDoc', resume.resumeId, resume.canonical.slice(0, 64))
-              );
-              resumeVectors.push({
-                resumeId: resume.resumeId,
-                vector: simpleVector
-              });
-              req.log.info(`Fallback embedding successful for ${resume.resumeId}`);
-            } catch (fallbackError) {
-              // Skip this resume if all embedding attempts fail
-              req.log.error(`Failed to embed resume ${resume.resumeId}: ${fallbackError.message}`);
-            }
+            req.log.error(`Batch ${Math.floor(i/batchSize) + 1} failed: ${e.message}`);
+            // Continue with next batch instead of failing completely
           }
-        }
         }
       }
 
