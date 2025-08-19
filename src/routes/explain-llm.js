@@ -1,6 +1,7 @@
 // src/routes/explain-llm.js
 import OpenAI from 'openai';
 import { normalizeCanonicalText } from '../lib/canon.js';
+import { parseAndCacheJD } from '../lib/jd-parser.js';
 import { getJD, getResume } from '../shared/storage.js';
 import { getEmbedding, getEmbeddingModel, signalCacheKey } from '../lib/embeddings.js';
 import { educationMeets } from '../lib/text.js';
@@ -110,18 +111,25 @@ export default async function explainLLMRoutes(app) {
         temperature = 0.2
       } = body || {};
 
-      // --- Resolve JD (text + structured)
-      let jdObj = null;
-      let rawJdText = jdText;
-      if (!rawJdText && jdHash) {
-        const rec = getJD(jdHash);
-        if (!rec) return reply.code(404).send({ error: `JD not found: ${jdHash}` });
-        jdObj = rec.jd || {};
-        rawJdText = (rec.metadata?.jdText || '').toString();
+      // --- Resolve JD with hybrid precedence
+      let jdRecord = null;
+      if (jdHash) {
+        jdRecord = getJD(jdHash);
+        if (!jdRecord && jdText) {
+          const parsed = await parseAndCacheJD(jdText);
+          jdRecord = getJD(parsed.jdHash);
+        }
+        if (!jdRecord && !jdText) return reply.code(404).send({ error: `JD not found: ${jdHash}` });
+      } else if (jdText) {
+        const parsed = await parseAndCacheJD(jdText);
+        jdRecord = getJD(parsed.jdHash);
+      } else {
+        return reply.code(400).send({ error: 'Provide jdHash or jdText' });
       }
-      if (!rawJdText && !jdObj) {
-        return reply.code(400).send({ error: 'Provide jdText or jdHash' });
-      }
+
+      // Use both the structured JSON and the raw JD text we store in metadata
+      const jdObj = jdRecord.jd || {};
+      const rawJdText = (jdRecord.metadata?.jdText || '').toString();
       const jdSignal = buildJdSignal(jdObj, rawJdText);
       const jdSignalNorm = normalizeCanonicalText(jdSignal, { flatten: 'soft' });
 
@@ -149,8 +157,9 @@ export default async function explainLLMRoutes(app) {
       const cvCanonical = normalizeCanonicalText(cvText, { flatten: 'soft' });
 
       // --- Base sims (for overall verdict band)
+      const actualJdHash = jdRecord.metadata?.jdHash || jdHash || 'inline';
       const [jdVec, cvVec] = await Promise.all([
-        getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', jdHash || 'inline', jdSignalNorm)),
+        getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', actualJdHash, jdSignalNorm)),
         getEmbedding(cvCanonical,  signalCacheKey('cvRaw', resumeLabel, cvCanonical.slice(0, 8192)))
       ]);
       const semanticCosine = Number(cosine(cvVec, jdVec).toFixed(4));
@@ -176,9 +185,9 @@ export default async function explainLLMRoutes(app) {
       // --- Per-term best matches (functions/skills/outcomes)
       let funcHits = [], skillHits = [], outcomeHits = [];
       if (includePerTerm) {
-        funcHits    = await bestForTerms(jdFuncs,    sentVecs, sentences, 'func', resumeLabel, jdHash || 'inline');
-        skillHits   = await bestForTerms(jdSkills,   sentVecs, sentences, 'skill', resumeLabel, jdHash || 'inline');
-        outcomeHits = await bestForTerms(jdOutcomes, sentVecs, sentences, 'outcome', resumeLabel, jdHash || 'inline');
+        funcHits    = await bestForTerms(jdFuncs,    sentVecs, sentences, 'func', resumeLabel, actualJdHash);
+        skillHits   = await bestForTerms(jdSkills,   sentVecs, sentences, 'skill', resumeLabel, actualJdHash);
+        outcomeHits = await bestForTerms(jdOutcomes, sentVecs, sentences, 'outcome', resumeLabel, actualJdHash);
       }
 
       // --- Union evidence set: global top-K + all per-term picks (cap 40)
