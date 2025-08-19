@@ -20,7 +20,8 @@ const app = Fastify({ logger: true });
 
 await app.register(cors, {
   origin: (origin, cb) => cb(null, true), // open for now; lock later
-  methods: ['POST', 'GET', 'OPTIONS']
+  methods: ['POST', 'GET', 'OPTIONS'],
+  exposedHeaders: ['X-JD-Hash']
 });
 await app.register(multipart, {
   limits: { fileSize: MAX_BYTES, files: 1, fields: 5 }

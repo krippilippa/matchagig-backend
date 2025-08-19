@@ -111,25 +111,31 @@ export default async function explainLLMRoutes(app) {
         temperature = 0.2
       } = body || {};
 
-      // --- Resolve JD with hybrid precedence
+      // === Resolve JD (hybrid) ===
+      let activeJdHash = null;
       let jdRecord = null;
       if (jdHash) {
         jdRecord = getJD(jdHash);
         if (!jdRecord && jdText) {
           const parsed = await parseAndCacheJD(jdText);
-          jdRecord = getJD(parsed.jdHash);
+          activeJdHash = parsed.jdHash;
+          jdRecord = getJD(activeJdHash);
+        } else {
+          activeJdHash = jdHash;
         }
-        if (!jdRecord && !jdText) return reply.code(404).send({ error: `JD not found: ${jdHash}` });
+        if (!jdRecord && !jdText) {
+          return reply.code(404).send({ error: `JD not found: ${jdHash}` });
+        }
       } else if (jdText) {
         const parsed = await parseAndCacheJD(jdText);
-        jdRecord = getJD(parsed.jdHash);
+        activeJdHash = parsed.jdHash;
+        jdRecord = getJD(activeJdHash);
       } else {
         return reply.code(400).send({ error: 'Provide jdHash or jdText' });
       }
 
-      // Use both the structured JSON and the raw JD text we store in metadata
-      const jdObj = jdRecord.jd || {};
-      const rawJdText = (jdRecord.metadata?.jdText || '').toString();
+      const jdObj = jdRecord?.jd || {};
+      const rawJdText = (jdRecord?.metadata?.jdText || '').toString();
       const jdSignal = buildJdSignal(jdObj, rawJdText);
       const jdSignalNorm = normalizeCanonicalText(jdSignal, { flatten: 'soft' });
 
@@ -157,9 +163,8 @@ export default async function explainLLMRoutes(app) {
       const cvCanonical = normalizeCanonicalText(cvText, { flatten: 'soft' });
 
       // --- Base sims (for overall verdict band)
-      const actualJdHash = jdRecord.metadata?.jdHash || jdHash || 'inline';
       const [jdVec, cvVec] = await Promise.all([
-        getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', actualJdHash, jdSignalNorm)),
+        getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', activeJdHash || 'inline', jdSignalNorm)),
         getEmbedding(cvCanonical,  signalCacheKey('cvRaw', resumeLabel, cvCanonical.slice(0, 8192)))
       ]);
       const semanticCosine = Number(cosine(cvVec, jdVec).toFixed(4));
@@ -185,9 +190,9 @@ export default async function explainLLMRoutes(app) {
       // --- Per-term best matches (functions/skills/outcomes)
       let funcHits = [], skillHits = [], outcomeHits = [];
       if (includePerTerm) {
-        funcHits    = await bestForTerms(jdFuncs,    sentVecs, sentences, 'func', resumeLabel, actualJdHash);
-        skillHits   = await bestForTerms(jdSkills,   sentVecs, sentences, 'skill', resumeLabel, actualJdHash);
-        outcomeHits = await bestForTerms(jdOutcomes, sentVecs, sentences, 'outcome', resumeLabel, actualJdHash);
+        funcHits    = await bestForTerms(jdFuncs,    sentVecs, sentences, 'func', resumeLabel, activeJdHash || 'inline');
+        skillHits   = await bestForTerms(jdSkills,   sentVecs, sentences, 'skill', resumeLabel, activeJdHash || 'inline');
+        outcomeHits = await bestForTerms(jdOutcomes, sentVecs, sentences, 'outcome', resumeLabel, activeJdHash || 'inline');
       }
 
       // --- Union evidence set: global top-K + all per-term picks (cap 40)
@@ -302,6 +307,11 @@ export default async function explainLLMRoutes(app) {
       });
 
       const md = resp.choices?.[0]?.message?.content?.trim() || 'No explanation generated.';
+
+      // Let the client adopt the hash we actually used
+      if (activeJdHash) {
+        reply.header('X-JD-Hash', activeJdHash);
+      }
       reply.header('Content-Type', 'text/markdown; charset=utf-8');
       return reply.send(md);
     } catch (e) {
