@@ -5,7 +5,7 @@ import { getJD, getResume } from '../shared/storage.js';
 import { getEmbedding, getEmbeddingModel, signalCacheKey } from '../lib/embeddings.js';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const LLM_MODEL = process.env.EXPLAIN_LLM_MODEL || 'gpt-4o-mini';
+const LLM_MODEL = process.env.EXPLAIN_LLM_MODEL || 'gpt-5';
 
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
@@ -61,7 +61,7 @@ export default async function explainLLMRoutes(app) {
         resumeText = null,
         resumeId = null,
         topK = 18,
-        temperature = 0.2
+        temperature = null
       } = body || {};
 
       // --- Resolve JD text / JD signal
@@ -139,7 +139,7 @@ export default async function explainLLMRoutes(app) {
 
       const resp = await client.chat.completions.create({
         model: LLM_MODEL,
-        temperature,
+        ...(temperature !== null && { temperature }),
         messages: [
           { role: 'system', content: sys },
           { role: 'user', content: user }
