@@ -87,39 +87,132 @@ export default async function bulkZipRoutes(app) {
       // Unzip and process PDFs
       const directory = await unzipper.Open.buffer(zipBuf);
       const pdfEntries = directory.files.filter(f => !f.isDirectory && /\.pdf$/i.test(f.path));
-      const results = [];
-
+      
+      req.log.info(`Processing ${pdfEntries.length} PDF files from zip`);
+      const startTime = Date.now();
+      
+      // Extract and prepare all resume data first
+      const resumeData = [];
       for (const entry of pdfEntries) {
         try {
           const buf = await entry.buffer();
           const parsed = await pdfParse(buf);
           const raw = parsed?.text || '';
           const canonical = normalizeCanonicalText(raw, { flatten: 'soft' });
-
           const resumeId = makeResumeIdFromText(canonical || entry.path || String(buf.length));
           const email = firstEmail(canonical) || null;
           const textChars = canonical.length;
-
-          let cos = null;
-          if (jdVec) {
-            const docVec = await getEmbedding(canonical, signalCacheKey('bulkDoc', resumeId, canonical.slice(0, 4096)));
-            cos = Number(cosine(docVec, jdVec).toFixed(4));
-          }
-
-          results.push({
+          
+          resumeData.push({
+            entry,
+            buf,
+            canonical,
             resumeId,
-            filename: entry.path.split('/').pop(),
-            bytes: buf.length,
-            textChars,
             email,
-            cosine: cos,
-            canonicalText: wantCanonicalText ? canonical : undefined
+            textChars
           });
         } catch (e) {
-          // Skip broken PDFs (or push an error row if you prefer)
-          // results.push({ filename: entry.path, status: 'error', message: e.message });
+          // Skip broken PDFs
         }
       }
+
+      // Batch embed all resume texts for better performance
+      let resumeVectors = [];
+      if (jdVec && resumeData.length > 0) {
+        // Helper functions for text chunking and mean pooling
+        function chunkText(text, size = 3000, overlap = 300) {
+          const out = []; let i = 0;
+          while (i < text.length) { 
+            out.push(text.slice(i, i + size)); 
+            i += (size - overlap); 
+          }
+          return out;
+        }
+
+        function meanPool(vectors) {
+          if (!vectors.length) return [];
+          const L = vectors[0].length, v = new Array(L).fill(0);
+          for (const vec of vectors) {
+            for (let i = 0; i < L; i++) v[i] += vec[i];
+          }
+          for (let i = 0; i < L; i++) v[i] /= vectors.length;
+          return v;
+        }
+
+        // Process each resume with chunking and pooling
+        const batchSize = 50; // OpenAI allows up to 100, but 50 is safer
+        resumeVectors = [];
+        
+        for (let i = 0; i < resumeData.length; i += batchSize) {
+          const batch = resumeData.slice(i, i + batchSize);
+          
+          // Process each resume in the batch
+          for (const resume of batch) {
+            try {
+              // Cap text length and chunk for better embedding quality
+              const cappedText = resume.canonical.length > 12000 ? 
+                resume.canonical.slice(0, 12000) : resume.canonical;
+              
+              // Split into chunks with overlap
+              const chunks = chunkText(cappedText, 3000, 300);
+              
+              // Get embeddings for all chunks
+              const chunkVectors = await Promise.all(
+                chunks.map((chunk, idx) => 
+                  getEmbedding(chunk, signalCacheKey('bulkChunk', resume.resumeId, `${idx}:${chunk.slice(0, 64)}`))
+                )
+              );
+              
+              // Mean pool all chunks into single document vector
+              const docVector = meanPool(chunkVectors);
+              
+              resumeVectors.push({
+                resumeId: resume.resumeId,
+                vector: docVector
+              });
+            } catch (e) {
+              // If chunking fails, fall back to simple approach
+              try {
+                const simpleVector = await getEmbedding(
+                  resume.canonical.slice(0, 8000), 
+                  signalCacheKey('bulkDoc', resume.resumeId, resume.canonical.slice(0, 64))
+                );
+                resumeVectors.push({
+                  resumeId: resume.resumeId,
+                  vector: simpleVector
+                });
+              } catch (fallbackError) {
+                // Skip this resume if all embedding attempts fail
+                console.warn(`Failed to embed resume ${resume.resumeId}:`, fallbackError.message);
+              }
+            }
+          }
+        }
+      }
+
+      // Build results with cosine scores
+      const results = resumeData.map((r) => {
+        let cos = null;
+        if (jdVec && resumeVectors.length > 0) {
+          const vectorData = resumeVectors.find(v => v.resumeId === r.resumeId);
+          if (vectorData) {
+            cos = Number(cosine(vectorData.vector, jdVec).toFixed(4));
+          }
+        }
+        
+        return {
+          resumeId: r.resumeId,
+          filename: r.entry.path.split('/').pop(),
+          bytes: r.buf.length,
+          textChars: r.textChars,
+          email: r.email,
+          cosine: cos,
+          canonicalText: wantCanonicalText ? r.canonical : undefined
+        };
+      });
+
+      const totalTime = Date.now() - startTime;
+      req.log.info(`Processed ${results.length} resumes in ${totalTime}ms (${(totalTime/results.length).toFixed(1)}ms per resume)`);
 
       // Sort by cosine desc (nulls last)
       results.sort((a, b) => {
