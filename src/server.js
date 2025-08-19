@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import uploadRoute from './routes/upload.js';
-import queryRoute from './routes/query.js';
+
 import summaryRoute from './routes/summary.js';
 import redflagsRoute from './routes/redflags.js';
 import overviewRoute from './routes/overview.js';
@@ -29,7 +29,7 @@ app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 
 // Register routes - all now use shared storage module
 await app.register(uploadRoute);
-await app.register(queryRoute);
+
 await app.register(summaryRoute);
 await app.register(redflagsRoute);
 await app.register(overviewRoute);

@@ -1,6 +1,6 @@
 // routes/match.js
 import OpenAI from 'openai';
-import { getResume, getJD, getResumeOverview } from "../shared/storage.js";
+import { getResume, getJD } from "../shared/storage.js";
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
 import { normalizeToken, intersect, educationMeets } from '../lib/text.js';
 import { SOFT_SKILL, SOFT_FUNC, SOFT_OUTCOME } from '../config/match-weights.js';
