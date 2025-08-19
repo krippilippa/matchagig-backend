@@ -20,7 +20,7 @@ export default async function uploadRoute(app) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   app.post('/v1/upload', async (req, reply) => {
-    console.log('🚀 Upload request started');
+  
     const ctype = req.headers['content-type'] || '';
     if (!ctype.includes('multipart/form-data')) {
       return reply.code(415).send(err('UNSUPPORTED_MEDIA_TYPE', 'Use multipart/form-data'));
@@ -30,7 +30,6 @@ export default async function uploadRoute(app) {
     }
 
     try {
-      console.log('📁 Processing multipart request...');
       // Read a single file part in a blocking-safe way
       const filePart = await req.file();
       if (!filePart) return reply.code(400).send(err('BAD_REQUEST', 'No file provided'));
@@ -43,13 +42,11 @@ export default async function uploadRoute(app) {
       // Generate unique resume ID
       const resumeId = uuidv4();
 
-      console.log('📤 Uploading file to OpenAI...');
       // Upload file to OpenAI for AI to process
       const uploaded = await openai.files.create({
         file: await toFile(buf, filename || 'upload', { type: mimetype || 'application/octet-stream' }),
         purpose: 'assistants'
       });
-      console.log('✅ File uploaded to OpenAI, ID:', uploaded.id);
 
       // Build messages ONCE - never replace the full prompt
       const BASE_SYSTEM = `You extract plain text from résumés (any language) and return ONLY valid JSON matching the schema. Use exact wording from the document. Unknown → null. No markdown. No extra keys.`;
@@ -90,9 +87,7 @@ export default async function uploadRoute(app) {
         const req = { model: process.env.OPENAI_MODEL || 'gpt-5-nano', input: messages };
 
         try {
-          console.log(`🤖 Calling OpenAI with model: ${req.model}`);
           const resp = await openai.responses.create(req);
-          console.log('✅ OpenAI response received');
           const text = (resp.output_text || '').trim();
 
           // If model still wrapped JSON in prose (just in case), extract first JSON object
@@ -137,7 +132,7 @@ export default async function uploadRoute(app) {
         uploadedAt: Date.now()
       };
       
-      console.log('🔧 Storing resume data for ID:', resumeId);
+
       storeResume(resumeId, resumeData);
 
       // Return response

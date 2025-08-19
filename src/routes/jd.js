@@ -280,7 +280,7 @@ export default async function jdRoute(app) {
 
       // Check for cached JD
       if (hasFreshJD(jdHash)) {
-        console.log('🔧 JD route: Using cached JD for hash:', jdHash);
+    
         const cachedJD = getJD(jdHash);
         return reply.send({
           jdHash,

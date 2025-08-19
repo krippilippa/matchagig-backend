@@ -1,16 +1,12 @@
 // routes/match.js
 import OpenAI from 'openai';
-import { getResume, getJD } from '../shared/storage.js';
+import { getResume, getJD, getResumeOverview } from "../shared/storage.js";
 import { getEmbedding, signalCacheKey, getEmbeddingModel } from '../lib/embeddings.js';
 import { normalizeToken, intersect, educationMeets } from '../lib/text.js';
 import { SOFT_SKILL, SOFT_FUNC, SOFT_OUTCOME } from '../config/match-weights.js';
+import { buildJdSignal } from "../lib/jd-signal.js";
+import { cosine } from "../lib/emb-bulk.js";
 
-function cosine(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  const L = Math.min(a.length, b.length);
-  for (let i = 0; i < L; i++) { const x = a[i], y = b[i]; dot += x*y; na += x*x; nb += y*y; }
-  return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-}
 
 const norm = (s) => (s || '').toString().trim();
 
@@ -38,30 +34,7 @@ function buildResumeSignal(overview = {}) {
   ].filter(Boolean).join(' | ');
 }
 
-function buildJdSignal(jd = {}) {
-  const ro = jd.roleOrg || {}; const log = jd.logistics || {}; const req = jd.requirements || {}; const ss = jd.successSignals || {};
-  const title = norm(ro.title);
-  const funcs = (ro.functions || []).map(norm).join(', ');
-  const skills = (ss.topHardSkills || []).map(norm).join(', ');
-  const outcomes = (ss.keyOutcomes || []).map(o => norm(o?.text)).filter(Boolean).join(', ');
-  const inds = (ss.industryHints || []).map(norm).join(', ');
-  const seniority = norm(ro.seniorityHint);
-  const langs = (log.languages || []).map(norm).join(', ');
-  const eduMin = norm(req.educationMin);
-  const workMode = norm(log.location?.workMode);
 
-  return [
-    `TITLE ${title}`,
-    funcs && `FUNCTIONS ${funcs}`,
-    skills && `SKILLS ${skills}`,
-    outcomes && `OUTCOMES ${outcomes}`,
-    inds && `INDUSTRIES ${inds}`,
-    seniority && `SENIORITY ${seniority}`,
-    langs && `LANGUAGES ${langs}`,
-    eduMin && `EDU_MIN ${eduMin}`,
-    workMode && `WORKMODE ${workMode}`
-  ].filter(Boolean).join(' | ');
-}
 
 function computeOverlaps({ overview, jd }) {
   const functionsOverlap = intersect(overview.functions || [], jd.roleOrg?.functions || [], 3);
@@ -226,35 +199,20 @@ export default async function matchRoute(app) {
       if (resumeData.canonicalText && jdData.metadata?.jdText) {
         const resumeFullText = resumeData.canonicalText;
         const jdFullText = jdData.metadata.jdText;
-        console.log('[DEBUG] Full text matching - Resume length:', resumeFullText.length, 'JD length:', jdFullText.length);
-        
         const [resumeFullVec, jdFullVec] = await Promise.all([
           getEmbedding(resumeFullText, signalCacheKey('resume_full', resumeId, resumeFullText.substring(0, 100))),
           getEmbedding(jdFullText, signalCacheKey('jd_full', jdHash, jdFullText.substring(0, 100)))
         ]);
         
         fullTextCosine = cosine(resumeFullVec, jdFullVec);
-        console.log('[DEBUG] Full text cosine:', fullTextCosine);
       }
-
-      // Debug inputs for semantic matching
-      console.log('[DEBUG] resumeFunctions:', overlaps.resumeFunctions);
-      console.log('[DEBUG] jdFunctions:', overlaps.jdFunctions);
-      console.log('[DEBUG] resumeSkills:', overlaps.resumeSkills);
-      console.log('[DEBUG] jdSkills:', overlaps.jdSkills);
-      console.log('[DEBUG] resumeAchievements:', overlaps.resumeAchievements);
-      console.log('[DEBUG] jdOutcomes:', overlaps.jdOutcomes);
-      console.log('[DEBUG] languagesOverlap:', overlaps.languagesOverlap);
 
       // Get all semantic matches (no filtering by thresholds for scoring)
       const skillMatches = await softSkillMatches(overlaps.resumeSkills, overlaps.jdSkills, resumeId, jdHash);
-      console.log('[DEBUG] skillMatches(raw):', skillMatches);
       
       const funcMatches = await softStringMatches(overlaps.resumeFunctions, overlaps.jdFunctions, 'func', resumeId, jdHash);
-      console.log('[DEBUG] funcMatches(raw):', funcMatches);
       
       const { pairs: outcomePairs } = await matchOutcomesSemantically(overlaps.resumeAchievements, overlaps.jdOutcomes, async (t) => getEmbedding(t, signalCacheKey('outcome', 'phrase', t)));
-      console.log('[DEBUG] outcomePairs(raw):', outcomePairs);
 
       return reply.send({
         resumeId, 

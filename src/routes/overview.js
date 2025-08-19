@@ -362,7 +362,7 @@ export default async function overviewRoute(app) {
 
       // Check for cached overview
       if (hasFreshOverview(resumeId)) {
-        console.log('🔧 Overview route: Using cached overview for resumeId:', resumeId);
+    
         const resumeData = getResume(resumeId);
         return reply.send({
           resumeId,
@@ -382,10 +382,7 @@ export default async function overviewRoute(app) {
 
       // Fetch canonical text from storage
       const resumeData = getResume(resumeId);
-      console.log('🔧 Overview route: Looking for resumeId:', resumeId);
-      console.log('🔧 Overview route: Current storage size:', getStorageSize());
-      console.log('🔧 Overview route: Stored keys:', getAllResumeIds());
-      console.log('🔧 Overview route: Found resume data:', !!resumeData);
+      
       
       if (!resumeData) {
         return reply.code(404).send(err('NOT_FOUND', 'Resume not found. Please upload first.'));

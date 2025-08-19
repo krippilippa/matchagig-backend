@@ -4,6 +4,8 @@ import OpenAI from 'openai';
 import { normalizeCanonicalText, flattenForPreview } from '../lib/canon.js';
 import { getJD } from '../shared/storage.js';
 import { getEmbeddingModel } from '../lib/embeddings.js';
+import { buildJdSignal } from "../lib/jd-signal.js";
+import { cosine } from "../lib/emb-bulk.js";
 
 export default async function bulkRoutes(app) {
   // helper: chunk → embed (batched) → mean-pool → cosine
@@ -35,37 +37,9 @@ export default async function bulkRoutes(app) {
     return v;
   }
   
-  function cosine(a,b){
-    let dot=0,na=0,nb=0, L=Math.min(a.length,b.length);
-    for (let i=0;i<L;i++){ const x=a[i],y=b[i]; dot+=x*y; na+=x*x; nb+=y*y; }
-    return (na&&nb)? dot/(Math.sqrt(na)*Math.sqrt(nb)) : 0;
-  }
 
-  // JD signal builder (same idea as in match.js)
-  const norm = s => (s||'').toString().trim();
-  function buildJdSignal(jd={}) {
-    const ro=jd.roleOrg||{}, log=jd.logistics||{}, req=jd.requirements||{}, ss=jd.successSignals||{};
-    const title=norm(ro.title);
-    const funcs=(ro.functions||[]).map(norm).join(', ');
-    const skills=(ss.topHardSkills||[]).map(norm).join(', ');
-    const outcomes=(ss.keyOutcomes||[]).map(o=>norm(o?.text)).filter(Boolean).join(', ');
-    const inds=(ss.industryHints||[]).map(norm).join(', ');
-    const seniority=norm(ro.seniorityHint);
-    const langs=(log.languages||[]).map(norm).join(', ');
-    const eduMin=norm(req.educationMin);
-    const workMode=norm(log.location?.workMode);
-    return [
-      `TITLE ${title}`,
-      funcs && `FUNCTIONS ${funcs}`,
-      skills && `SKILLS ${skills}`,
-      outcomes && `OUTCOMES ${outcomes}`,
-      inds && `INDUSTRIES ${inds}`,
-      seniority && `SENIORITY ${seniority}`,
-      langs && `LANGUAGES ${langs}`,
-      eduMin && `EDU_MIN ${eduMin}`,
-      workMode && `WORKMODE ${workMode}`
-    ].filter(Boolean).join(' | ');
-  }
+
+
 
   // Simple test route - upload PDF and extract text
   app.post("/v1/bulk-test", async (req, reply) => {
