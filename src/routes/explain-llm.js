@@ -7,7 +7,7 @@ import { getEmbedding, getEmbeddingModel, signalCacheKey } from '../lib/embeddin
 import { educationMeets } from '../lib/text.js';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const LLM_MODEL = process.env.EXPLAIN_LLM_MODEL || 'gpt-4o-mini';
+const LLM_MODEL = process.env.EXPLAIN_LLM_MODEL || 'gpt-5';
 
 // --- Similarity helpers ---
 function cosine(a, b) {
@@ -105,8 +105,7 @@ export default async function explainLLMRoutes(app) {
         resumeId = null,
         // tuning:
         topKGlobal = 14,      // global top-K evidence
-        includePerTerm = true,
-        temperature = 0.2
+        includePerTerm = true
       } = body || {};
 
       // === Resolve JD (stored JDs only) ===
@@ -335,7 +334,6 @@ export default async function explainLLMRoutes(app) {
 
       const resp = await client.chat.completions.create({
         model: LLM_MODEL,
-        ...(temperature !== null && { temperature }),
         messages: [
           { role: 'system', content: sys },
           { role: 'user', content: user }
