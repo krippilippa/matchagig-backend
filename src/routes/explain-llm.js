@@ -217,18 +217,26 @@ export default async function explainLLMRoutes(app) {
       }
 
       // --- Global top-K evidence vs JD signal
+      req.log.info('Starting global ranking calculation...');
       const globalRank = sentences
         .map((s, i) => ({ idx: i, text: s, cos: cosine(sentVecs[i], jdVec) }))
         .sort((a,b) => b.cos - a.cos)
         .slice(0, Math.max(6, Math.min(30, topKGlobal)));
+      req.log.info(`Global ranking completed: ${globalRank.length} top sentences`);
 
       // --- Per-term best matches (functions/skills/outcomes)
+      req.log.info('Starting per-term analysis...');
       let funcHits = [], skillHits = [], outcomeHits = [];
       if (includePerTerm) {
+        req.log.info(`Analyzing ${jdFuncs.length} functions, ${jdSkills.length} skills, ${jdOutcomes.length} outcomes`);
         funcHits    = await bestForTerms(jdFuncs,    sentVecs, sentences, 'func', resumeLabel, activeJdHash || 'inline');
+        req.log.info(`Functions analysis completed: ${funcHits.length} hits`);
         skillHits   = await bestForTerms(jdSkills,   sentVecs, sentences, 'skill', resumeLabel, activeJdHash || 'inline');
+        req.log.info(`Skills analysis completed: ${skillHits.length} hits`);
         outcomeHits = await bestForTerms(jdOutcomes, sentVecs, sentences, 'outcome', resumeLabel, activeJdHash || 'inline');
+        req.log.info(`Outcomes analysis completed: ${outcomeHits.length} hits`);
       }
+      req.log.info('Per-term analysis completed');
 
       // --- Union evidence set: global top-K + all per-term picks (cap 40)
       const wantedIdx = new Set(globalRank.map(r => r.idx));
@@ -332,6 +340,7 @@ export default async function explainLLMRoutes(app) {
         '- Avoid generic praise. No fluff. Use the evidence indexes.',
       ].join('\n');
 
+      req.log.info('Starting LLM call...');
       const resp = await client.chat.completions.create({
         model: LLM_MODEL,
         messages: [
@@ -339,6 +348,7 @@ export default async function explainLLMRoutes(app) {
           { role: 'user', content: user }
         ]
       });
+      req.log.info('LLM call completed successfully');
 
       const md = resp.choices?.[0]?.message?.content?.trim() || 'No explanation generated.';
 
