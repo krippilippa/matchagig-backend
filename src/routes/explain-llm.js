@@ -99,10 +99,8 @@ export default async function explainLLMRoutes(app) {
     try {
       const body = await req.body;
       const {
-        // preferred: raw texts from client (exactly what user sees)
-        jdText = null,
+        // Only accept resumeText (fastest) and jdHash (stored JDs only)
         resumeText = null,
-        // fallbacks:
         jdHash = null,
         resumeId = null,
         // tuning:
@@ -111,33 +109,43 @@ export default async function explainLLMRoutes(app) {
         temperature = 0.2
       } = body || {};
 
-      // === Resolve JD (hybrid) ===
-      let activeJdHash = null;
-      let jdRecord = null;
-      if (jdHash) {
-        jdRecord = getJD(jdHash);
-        if (!jdRecord && jdText) {
-          const parsed = await parseAndCacheJD(jdText);
-          activeJdHash = parsed.jdHash;
-          jdRecord = getJD(activeJdHash);
-        } else {
-          activeJdHash = jdHash;
-        }
-        if (!jdRecord && !jdText) {
-          return reply.code(404).send({ error: `JD not found: ${jdHash}` });
-        }
-      } else if (jdText) {
-        const parsed = await parseAndCacheJD(jdText);
-        activeJdHash = parsed.jdHash;
-        jdRecord = getJD(activeJdHash);
-      } else {
-        return reply.code(400).send({ error: 'Provide jdHash or jdText' });
+      // === Resolve JD (stored JDs only) ===
+      if (!jdHash) {
+        return reply.code(400).send({ error: 'Provide jdHash - only stored JDs supported' });
       }
+      
+      const jdRecord = getJD(jdHash);
+      if (!jdRecord) {
+        return reply.code(404).send({ error: `JD not found: ${jdHash}` });
+      }
+      
+      const activeJdHash = jdHash;
 
       const jdObj = jdRecord?.jd || {};
       const rawJdText = (jdRecord?.metadata?.jdText || '').toString();
       const jdSignal = buildJdSignal(jdObj, rawJdText);
       const jdSignalNorm = normalizeCanonicalText(jdSignal, { flatten: 'soft' });
+      
+      // Cache JD embeddings to avoid re-embedding the same JD every time
+      const jdCacheKey = `jd_embedding_${activeJdHash}`;
+      let jdVec = null;
+      
+      // Try to get cached JD embedding first
+      try {
+        const cached = await getEmbedding(jdCacheKey, jdCacheKey);
+        if (cached && cached.length > 0) {
+          jdVec = cached;
+          req.log.info(`Using cached JD embedding for ${activeJdHash}`);
+        }
+      } catch (e) {
+        // Cache miss, will generate new embedding
+      }
+      
+      // Generate new JD embedding if not cached
+      if (!jdVec) {
+        jdVec = await getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', activeJdHash, jdSignalNorm));
+        req.log.info(`Generated new JD embedding for ${activeJdHash}`);
+      }
 
       // Pull structured fields (if any)
       const jdTitle   = jdObj?.roleOrg?.title || null;
@@ -160,11 +168,20 @@ export default async function explainLLMRoutes(app) {
         cvText = r?.canonicalText || r?.text?.canonical || r?.text || '';
       }
       if (!cvText) return reply.code(400).send({ error: 'Provide resumeText or resumeId' });
-      const cvCanonical = normalizeCanonicalText(cvText, { flatten: 'soft' });
+      
+      // Optimize resume text length for embedding (OpenAI works best with 4k-8k chars)
+      const maxResumeLength = 8000;
+      const cvCanonical = normalizeCanonicalText(
+        cvText.length > maxResumeLength ? cvText.slice(0, maxResumeLength) : cvText, 
+        { flatten: 'soft' }
+      );
+      
+      if (cvText.length > maxResumeLength) {
+        req.log.info(`Truncated resume from ${cvText.length} to ${cvCanonical.length} chars for optimal embedding`);
+      }
 
       // --- Base sims (for overall verdict band)
-      const [jdVec, cvVec] = await Promise.all([
-        getEmbedding(jdSignalNorm, signalCacheKey('jdSignal', activeJdHash || 'inline', jdSignalNorm)),
+      const [cvVec] = await Promise.all([
         getEmbedding(cvCanonical,  signalCacheKey('cvRaw', resumeLabel, cvCanonical.slice(0, 8192)))
       ]);
       const semanticCosine = Number(cosine(cvVec, jdVec).toFixed(4));
