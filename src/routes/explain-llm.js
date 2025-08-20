@@ -173,13 +173,32 @@ export default async function explainLLMRoutes(app) {
       const fullTextCosine = Number(cosine(cvShortVec, jdVec).toFixed(4));
       const band = verdictBand(semanticCosine);
 
-      // --- Sentence embeddings
+      // --- Sentence embeddings (BATCHED for efficiency)
       const sentences = splitSentences(cvCanonical);
-      const sentVecs = await Promise.all(
-        sentences.map((s,i) =>
-          getEmbedding(s, signalCacheKey('sent', `cv:${resumeLabel}`, `${i}:${s.slice(0,64)}`))
-        )
-      );
+      const sentVecs = [];
+      
+      if (sentences.length > 0) {
+        // Batch embed sentences instead of individual calls (major performance improvement)
+        const batchSize = 96; // OpenAI allows up to 100, 96 is optimal
+        
+        for (let i = 0; i < sentences.length; i += batchSize) {
+          const batch = sentences.slice(i, i + batchSize);
+          const batchTexts = batch.map(s => s);
+          const batchKeys = batch.map((s, idx) => 
+            signalCacheKey('sent', `cv:${resumeLabel}`, `${i + idx}:${s.slice(0, 64)}`)
+          );
+          
+          // Single API call for entire batch instead of individual calls
+          const batchVectors = await Promise.all(
+            batch.map((s, idx) => getEmbedding(s, batchKeys[idx]))
+          );
+          
+          // Store vectors in correct order
+          sentVecs.push(...batchVectors);
+        }
+        
+        req.log.info(`Embedded ${sentences.length} sentences in ${Math.ceil(sentences.length / batchSize)} batches`);
+      }
 
       // --- Global top-K evidence vs JD signal
       const globalRank = sentences
@@ -312,6 +331,8 @@ export default async function explainLLMRoutes(app) {
       if (activeJdHash) {
         reply.header('X-JD-Hash', activeJdHash);
       }
+      
+      req.log.info(`explain-llm completed: ${sentences.length} sentences, ${evidenceAll.length} evidence items`);
       reply.header('Content-Type', 'text/markdown; charset=utf-8');
       return reply.send(md);
     } catch (e) {
