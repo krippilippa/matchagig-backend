@@ -6,6 +6,22 @@ import { normalizeCanonicalText } from '../lib/canon.js';
 import { getJD } from '../shared/storage.js';
 import { getEmbedding, getEmbeddingModel, signalCacheKey } from '../lib/embeddings.js';
 
+// Suppress PDF parsing warnings to avoid log spam
+const originalWarn = console.warn;
+let fontWarningShown = false;
+console.warn = function(...args) {
+  const message = args.join(' ');
+  if (message.includes('font private use area') || message.includes('TT: undefined function')) {
+    if (!fontWarningShown) {
+      originalWarn('PDF parsing warnings suppressed (font issues are common and harmless)');
+      fontWarningShown = true;
+    }
+    return; // Don't show the warning
+  }
+  // Show all other warnings normally
+  originalWarn.apply(console, args);
+};
+
 function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;
   const L = Math.min(a.length, b.length);
