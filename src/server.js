@@ -2,17 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
-import uploadRoute from './routes/upload.js';
-
-import summaryRoute from './routes/summary.js';
-import redflagsRoute from './routes/redflags.js';
-import overviewRoute from './routes/overview.js';
-import jdRoute from './routes/jd.js';
-import matchRoute from './routes/match.js';
-import bulkRoutes from './routes/bulk.js';
 import bulkZipRoutes from './routes/bulk-zip.js';
-import explainLLMRoutes from './routes/explain-llm.js';
-import chatRoutes from './routes/chat.js';
 import chatResponsesRoutes from './routes/chat-responses.js';
 
 const PORT = process.env.PORT || 8787;
@@ -31,21 +21,11 @@ await app.register(multipart, {
 
 app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 
-// Register routes - all now use shared storage module
-await app.register(uploadRoute);
-
-await app.register(summaryRoute);
-await app.register(redflagsRoute);
-await app.register(overviewRoute);
-await app.register(jdRoute);
-await app.register(matchRoute);
-await app.register(bulkRoutes);
+// Register only essential routes for demo
 await app.register(bulkZipRoutes);
-await app.register(explainLLMRoutes);
-await app.register(chatRoutes);
 await app.register(chatResponsesRoutes);
 
-console.log('✅ All routes registered with shared storage');
+console.log('✅ Demo routes registered: bulk-zip, chat-responses');
 
 function err(code, message, details = {}) {
   return { error: { code, message, details } };

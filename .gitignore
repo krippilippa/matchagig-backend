@@ -22,5 +22,8 @@ pnpm-debug.log*
 # Local storage
 resume-storage.json
 
+# Resume files
+resumes/
+
 # Zip files
 *.zip
