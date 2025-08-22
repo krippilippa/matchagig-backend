@@ -13,6 +13,7 @@ import bulkRoutes from './routes/bulk.js';
 import bulkZipRoutes from './routes/bulk-zip.js';
 import explainLLMRoutes from './routes/explain-llm.js';
 import chatRoutes from './routes/chat.js';
+import chatResponsesRoutes from './routes/chat-responses.js';
 
 const PORT = process.env.PORT || 8787;
 const MAX_BYTES = 250 * 1024 * 1024; // 250MB for bulk-zip support
@@ -42,6 +43,7 @@ await app.register(bulkRoutes);
 await app.register(bulkZipRoutes);
 await app.register(explainLLMRoutes);
 await app.register(chatRoutes);
+await app.register(chatResponsesRoutes);
 
 console.log('✅ All routes registered with shared storage');
 
