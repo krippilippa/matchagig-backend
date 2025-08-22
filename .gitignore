@@ -21,3 +21,6 @@ pnpm-debug.log*
 
 # Local storage
 resume-storage.json
+
+# Zip files
+*.zip
