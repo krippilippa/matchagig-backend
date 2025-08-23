@@ -1,4 +1,41 @@
-// routes/resume-extract.js - Static resume extraction for frontend development
+// routes/resume-extract.js - AI-powered resume extraction for frontend development
+import OpenAI from 'openai';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Single optimized prompt for extracting essential resume information
+const EXTRACTION_PROMPT = `Extract essential information from this resume text. Return ONLY valid JSON matching this exact schema:
+
+{
+  "extraction": {
+    "basic": {
+      "name": "string|null",
+      "email": "string|null", 
+      "phone": "string|null",
+      "location": "string|null"
+    },
+    "professional": {
+      "title": "string|null",
+      "summary": "string|null",
+      "yearsExperience": "number|null",
+      "seniority": "Junior|Mid|Senior|Lead/Head|Director+|Unknown|null"
+    }
+  }
+}
+
+Rules:
+- name: Full name as written in resume
+- email: Email address if present
+- phone: Phone number if present  
+- location: City, State/Country if present
+- title: Current or most recent job title
+- summary: Professional summary or objective (1-2 sentences max)
+- yearsExperience: Total years of experience (numeric only)
+- seniority: Infer from title/experience (Junior=0-2y, Mid=3-5y, Senior=6-8y, Lead/Head=9-12y, Director+=13y+)
+
+Extract from this resume text:
+<<<RESUME_TEXT>>>`;
+
 export default async function resumeExtractRoutes(app) {
   app.post('/v1/resume/extract', async (req, reply) => {
     try {
@@ -13,124 +50,96 @@ export default async function resumeExtractRoutes(app) {
         });
       }
 
-      // For now, return static JSON data regardless of input
-      // This allows frontend development without actual resume processing
-      const staticResumeData = {
-        resumeId: "rs_static_demo_123",
-        extractionTimestamp: new Date().toISOString(),
-        inputLength: canonicalText.length,
-        
-        // Basic Info
-        basicInfo: {
-          name: "John Smith",
-          email: "john.smith@email.com",
-          phone: "+1 (555) 123-4567",
-          location: "San Francisco, CA",
-          linkedin: "linkedin.com/in/johnsmith",
-          website: "johnsmith.dev"
-        },
-        
-        // Professional Summary
-        summary: "Senior Software Engineer with 8+ years of experience in full-stack development, specializing in React, Node.js, and cloud technologies. Proven track record of leading teams and delivering scalable solutions.",
-        
-        // Work Experience
-        workExperience: [
-          {
-            company: "TechCorp Inc.",
-            position: "Senior Software Engineer",
-            duration: "2021 - Present",
-            location: "San Francisco, CA",
-            achievements: [
-              "Led development of microservices architecture serving 1M+ users",
-              "Mentored 5 junior developers and improved team productivity by 30%",
-              "Implemented CI/CD pipeline reducing deployment time by 60%"
-            ],
-            technologies: ["React", "Node.js", "AWS", "Docker", "Kubernetes"]
-          },
-          {
-            company: "StartupXYZ",
-            position: "Full Stack Developer",
-            duration: "2019 - 2021",
-            location: "Remote",
-            achievements: [
-              "Built MVP from scratch that secured $2M in funding",
-              "Developed RESTful APIs handling 100K+ requests daily",
-              "Optimized database queries improving response time by 40%"
-            ],
-            technologies: ["JavaScript", "Python", "PostgreSQL", "Redis", "Heroku"]
-          }
-        ],
-        
-        // Education
-        education: [
-          {
-            degree: "Bachelor of Science in Computer Science",
-            institution: "University of California, Berkeley",
-            graduationYear: "2019",
-            gpa: "3.8/4.0",
-            relevantCourses: ["Data Structures", "Algorithms", "Software Engineering", "Database Systems"]
-          }
-        ],
-        
-        // Skills
-        skills: {
-          programmingLanguages: ["JavaScript", "Python", "Java", "TypeScript", "Go"],
-          frontend: ["React", "Vue.js", "HTML5", "CSS3", "Sass"],
-          backend: ["Node.js", "Express", "Django", "FastAPI", "GraphQL"],
-          databases: ["PostgreSQL", "MongoDB", "Redis", "MySQL"],
-          cloud: ["AWS", "Google Cloud", "Docker", "Kubernetes", "Terraform"],
-          tools: ["Git", "Jenkins", "Jira", "Postman", "VS Code"]
-        },
-        
-        // Certifications
-        certifications: [
-          {
-            name: "AWS Certified Solutions Architect",
-            issuer: "Amazon Web Services",
-            date: "2023",
-            expiry: "2026"
-          },
-          {
-            name: "Certified Kubernetes Administrator",
-            issuer: "Cloud Native Computing Foundation",
-            date: "2022",
-            expiry: "2025"
-          }
-        ],
-        
-        // Languages
-        languages: [
-          { language: "English", proficiency: "Native" },
-          { language: "Spanish", proficiency: "Conversational" }
-        ],
-        
-        // Projects
-        projects: [
-          {
-            name: "E-commerce Platform",
-            description: "Full-stack e-commerce solution with payment integration",
-            technologies: ["React", "Node.js", "Stripe", "MongoDB"],
-            github: "github.com/johnsmith/ecommerce",
-            liveUrl: "ecommerce-demo.com"
-          },
-          {
-            name: "Task Management App",
-            description: "Real-time collaborative task management application",
-            technologies: ["Vue.js", "Socket.io", "PostgreSQL", "Redis"],
-            github: "github.com/johnsmith/taskapp"
-          }
-        ],
-        
-        // Meta Information
-        metadata: {
-          processingTime: "0.5ms",
-          confidence: 0.95,
-          extractionMethod: "static_demo_data",
-          version: "1.0.0"
-        }
-      };
+      const startTime = Date.now();
 
-      return reply.send(staticResumeData);
+      // Check if OpenAI API key is available
+      if (!process.env.OPENAI_API_KEY) {
+        console.warn('OpenAI API key not configured, using fallback extraction');
+        
+        // Use fallback extraction when no API key
+        const fallbackData = {
+          extraction: {
+            basic: {
+              name: extractName(canonicalText),
+              email: extractEmail(canonicalText),
+              phone: extractPhone(canonicalText),
+              location: extractLocation(canonicalText)
+            },
+            professional: {
+              title: extractTitle(canonicalText),
+              summary: extractSummary(canonicalText),
+              yearsExperience: extractYearsExperience(canonicalText),
+              seniority: extractSeniority(extractYearsExperience(canonicalText))
+            }
+          },
+          processingTime: `${Date.now() - startTime}ms`,
+          fallbackUsed: true,
+          reason: 'No OpenAI API key configured'
+        };
+
+        return reply.send(fallbackData);
+      }
+
+      try {
+        // Call OpenAI with the optimized prompt
+        const response = await openai.chat.completions.create({
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          messages: [
+            { 
+              role: 'system', 
+              content: 'You are a resume parsing expert. Extract information accurately and return only valid JSON.' 
+            },
+            { 
+              role: 'user', 
+              content: EXTRACTION_PROMPT.replace('<<<RESUME_TEXT>>>', canonicalText) 
+            }
+          ],
+          temperature: 0, // Ensure consistent output
+          max_tokens: 500,
+          response_format: { type: 'json_object' }
+        });
+
+        const extractedData = JSON.parse(response.choices[0].message.content);
+        const processingTime = `${Date.now() - startTime}ms`;
+
+        // Validate the extracted data structure
+        if (!extractedData.extraction || !extractedData.extraction.basic || !extractedData.extraction.professional) {
+          throw new Error('Invalid extraction structure returned from AI');
+        }
+
+        // Add processing time to the response
+        extractedData.processingTime = processingTime;
+
+        return reply.send(extractedData);
+
+      } catch (aiError) {
+        // If AI extraction fails, provide a fallback with basic info
+        console.warn('AI extraction failed, using fallback:', aiError.message);
+        
+        // Simple fallback extraction using regex patterns
+        const yearsExp = extractYearsExperience(canonicalText);
+        const fallbackData = {
+          extraction: {
+            basic: {
+              name: extractName(canonicalText),
+              email: extractEmail(canonicalText),
+              phone: extractPhone(canonicalText),
+              location: extractLocation(canonicalText)
+            },
+            professional: {
+              title: extractTitle(canonicalText),
+              summary: extractSummary(canonicalText),
+              yearsExperience: yearsExp,
+              seniority: extractSeniority(yearsExp)
+            }
+          },
+          processingTime: `${Date.now() - startTime}ms`,
+          fallbackUsed: true,
+          reason: 'AI extraction failed, using regex fallback'
+        };
+
+        return reply.send(fallbackData);
+      }
       
     } catch (e) {
       req.log.error(e);
@@ -140,4 +149,70 @@ export default async function resumeExtractRoutes(app) {
       });
     }
   });
+}
+
+// Fallback extraction functions using regex patterns
+function extractName(text) {
+  // Look for common name patterns at the beginning
+  const nameMatch = text.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/);
+  return nameMatch ? nameMatch[1] : null;
+}
+
+function extractEmail(text) {
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return emailMatch ? emailMatch[0] : null;
+}
+
+function extractPhone(text) {
+  const phoneMatch = text.match(/(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+  return phoneMatch ? phoneMatch[0] : null;
+}
+
+function extractLocation(text) {
+  // Look for city, state/country patterns
+  const locationMatch = text.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z][a-z]+)/);
+  return locationMatch ? locationMatch[1] : null;
+}
+
+function extractTitle(text) {
+  // Look for job titles in the first few lines
+  const lines = text.split('\n').slice(0, 10);
+  for (const line of lines) {
+    const titleMatch = line.match(/(?:^|\s)((?:Senior\s+)?(?:Software\s+)?(?:Engineer|Developer|Manager|Analyst|Consultant|Specialist|Coordinator|Assistant|Director|Lead|Head))/i);
+    if (titleMatch) return titleMatch[1];
+  }
+  return null;
+}
+
+function extractSummary(text) {
+  // Look for summary/objective sections
+  const summaryMatch = text.match(/(?:summary|objective|profile)[:\s]+([^.\n]+(?:[.\n][^.\n]+)*)/i);
+  return summaryMatch ? summaryMatch[1].trim() : null;
+}
+
+function extractYearsExperience(text) {
+  // Look for years of experience patterns
+  const yearsMatch = text.match(/(\d+)\+?\s*(?:years?|yrs?)\s+(?:of\s+)?experience/i);
+  if (yearsMatch) return parseInt(yearsMatch[1]);
+  
+  // Look for date ranges to estimate
+  const dateMatch = text.match(/(\d{4})\s*[-–]\s*(\d{4}|present|current)/i);
+  if (dateMatch) {
+    const startYear = parseInt(dateMatch[1]);
+    const endYear = dateMatch[2].toLowerCase() === 'present' || dateMatch[2].toLowerCase() === 'current' 
+      ? new Date().getFullYear() 
+      : parseInt(dateMatch[2]);
+    return endYear - startYear;
+  }
+  
+  return null;
+}
+
+function extractSeniority(years) {
+  if (!years) return 'Unknown';
+  if (years <= 2) return 'Junior';
+  if (years <= 5) return 'Mid';
+  if (years <= 8) return 'Senior';
+  if (years <= 12) return 'Lead/Head';
+  return 'Director+';
 }
