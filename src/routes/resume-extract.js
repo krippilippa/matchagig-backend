@@ -2,6 +2,7 @@
 import OpenAI from 'openai';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
 
 // Single optimized prompt for extracting essential resume information
 const EXTRACTION_PROMPT = `Extract essential information from this resume text. Return ONLY valid JSON matching this exact schema:
@@ -10,28 +11,20 @@ const EXTRACTION_PROMPT = `Extract essential information from this resume text. 
   "extraction": {
     "basic": {
       "name": "string|null",
-      "email": "string|null", 
-      "phone": "string|null",
-      "location": "string|null"
-    },
-    "professional": {
+      "location": "string|null",
       "title": "string|null",
       "summary": "string|null",
-      "yearsExperience": "number|null",
-      "seniority": "Junior|Mid|Senior|Lead/Head|Director+|Unknown|null"
+      "yearsExperience": "number|null"
     }
   }
 }
 
 Rules:
 - name: Full name as written in resume
-- email: Email address if present
-- phone: Phone number if present  
 - location: City, State/Country if present
 - title: Current or most recent job title
-- summary: Professional summary or objective (1-2 sentences max)
+- summary: Write a neutral, objective summary of around 100 words describing who this candidate is, their key strengths, and general background. Be objective and professional regardless of industry or seniority level.
 - yearsExperience: Total years of experience (numeric only)
-- seniority: Infer from title/experience (Junior=0-2y, Mid=3-5y, Senior=6-8y, Lead/Head=9-12y, Director+=13y+)
 
 Extract from this resume text:
 <<<RESUME_TEXT>>>`;
@@ -82,30 +75,25 @@ export default async function resumeExtractRoutes(app) {
 
       try {
         // Call OpenAI with the optimized prompt
+        console.log('🤖 Attempting AI extraction with model:', MODEL);
+        
         const response = await openai.chat.completions.create({
-          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          model: MODEL,
           messages: [
             { 
               role: 'system', 
-              content: 'You are a resume parsing expert. Extract information accurately and return only valid JSON.' 
+              content: 'You are a professional resume analyst. Extract information accurately and write neutral, objective summaries of around 100 words for any candidate regardless of industry or seniority level. Return only valid JSON.' 
             },
             { 
               role: 'user', 
               content: EXTRACTION_PROMPT.replace('<<<RESUME_TEXT>>>', canonicalText) 
             }
-          ],
-          temperature: 0, // Ensure consistent output
-          max_tokens: 500,
-          response_format: { type: 'json_object' }
+          ]
         });
 
+        console.log('✅ AI extraction successful');
         const extractedData = JSON.parse(response.choices[0].message.content);
         const processingTime = `${Date.now() - startTime}ms`;
-
-        // Validate the extracted data structure
-        if (!extractedData.extraction || !extractedData.extraction.basic || !extractedData.extraction.professional) {
-          throw new Error('Invalid extraction structure returned from AI');
-        }
 
         // Add processing time to the response
         extractedData.processingTime = processingTime;
@@ -113,32 +101,14 @@ export default async function resumeExtractRoutes(app) {
         return reply.send(extractedData);
 
       } catch (aiError) {
-        // If AI extraction fails, provide a fallback with basic info
-        console.warn('AI extraction failed, using fallback:', aiError.message);
-        
-        // Simple fallback extraction using regex patterns
-        const yearsExp = extractYearsExperience(canonicalText);
-        const fallbackData = {
-          extraction: {
-            basic: {
-              name: extractName(canonicalText),
-              email: extractEmail(canonicalText),
-              phone: extractPhone(canonicalText),
-              location: extractLocation(canonicalText)
-            },
-            professional: {
-              title: extractTitle(canonicalText),
-              summary: extractSummary(canonicalText),
-              yearsExperience: yearsExp,
-              seniority: extractSeniority(yearsExp)
-            }
-          },
-          processingTime: `${Date.now() - startTime}ms`,
-          fallbackUsed: true,
-          reason: 'AI extraction failed, using regex fallback'
-        };
-
-        return reply.send(fallbackData);
+        // If AI extraction fails, return an error
+        console.warn('❌ AI extraction failed:', aiError.message);
+        return reply.code(500).send({ 
+          error: 'AI_EXTRACTION_FAILED', 
+          message: 'Failed to extract resume data using AI',
+          details: aiError.message,
+          processingTime: `${Date.now() - startTime}ms`
+        });
       }
       
     } catch (e) {
@@ -149,70 +119,4 @@ export default async function resumeExtractRoutes(app) {
       });
     }
   });
-}
-
-// Fallback extraction functions using regex patterns
-function extractName(text) {
-  // Look for common name patterns at the beginning
-  const nameMatch = text.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/);
-  return nameMatch ? nameMatch[1] : null;
-}
-
-function extractEmail(text) {
-  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return emailMatch ? emailMatch[0] : null;
-}
-
-function extractPhone(text) {
-  const phoneMatch = text.match(/(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  return phoneMatch ? phoneMatch[0] : null;
-}
-
-function extractLocation(text) {
-  // Look for city, state/country patterns
-  const locationMatch = text.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z][a-z]+)/);
-  return locationMatch ? locationMatch[1] : null;
-}
-
-function extractTitle(text) {
-  // Look for job titles in the first few lines
-  const lines = text.split('\n').slice(0, 10);
-  for (const line of lines) {
-    const titleMatch = line.match(/(?:^|\s)((?:Senior\s+)?(?:Software\s+)?(?:Engineer|Developer|Manager|Analyst|Consultant|Specialist|Coordinator|Assistant|Director|Lead|Head))/i);
-    if (titleMatch) return titleMatch[1];
-  }
-  return null;
-}
-
-function extractSummary(text) {
-  // Look for summary/objective sections
-  const summaryMatch = text.match(/(?:summary|objective|profile)[:\s]+([^.\n]+(?:[.\n][^.\n]+)*)/i);
-  return summaryMatch ? summaryMatch[1].trim() : null;
-}
-
-function extractYearsExperience(text) {
-  // Look for years of experience patterns
-  const yearsMatch = text.match(/(\d+)\+?\s*(?:years?|yrs?)\s+(?:of\s+)?experience/i);
-  if (yearsMatch) return parseInt(yearsMatch[1]);
-  
-  // Look for date ranges to estimate
-  const dateMatch = text.match(/(\d{4})\s*[-–]\s*(\d{4}|present|current)/i);
-  if (dateMatch) {
-    const startYear = parseInt(dateMatch[1]);
-    const endYear = dateMatch[2].toLowerCase() === 'present' || dateMatch[2].toLowerCase() === 'current' 
-      ? new Date().getFullYear() 
-      : parseInt(dateMatch[2]);
-    return endYear - startYear;
-  }
-  
-  return null;
-}
-
-function extractSeniority(years) {
-  if (!years) return 'Unknown';
-  if (years <= 2) return 'Junior';
-  if (years <= 5) return 'Mid';
-  if (years <= 8) return 'Senior';
-  if (years <= 12) return 'Lead/Head';
-  return 'Director+';
 }
