@@ -14,8 +14,7 @@ const EXTRACTION_PROMPT = `Extract essential information from this resume text. 
       "location": "string|null",
       "title": "string|null",
       "blurb": "string|null",
-      "summary": "string|null",
-      "yearsExperience": "number|null"
+      "summary": "string|null"
     }
   }
 }
@@ -24,9 +23,8 @@ Rules:
 - name: Full name as written in resume
 - location: City, State/Country if present
 - title: Current or most recent job title
-- blurb: Quick one-sentence overview (5-10 words max) describing who they are professionally
-- summary: Write a neutral, objective summary of around 100 words describing who this candidate is, their key strengths, and general background. Be objective and professional regardless of industry or seniority level.
-- yearsExperience: Total years of experience (numeric only)
+- blurb: Two-sentence professional overview (15-20 words total) describing who they are and their key strengths
+- summary: Write a neutral, objective summary of around 80 words describing who this candidate is, their key strengths, and general background. Be objective and professional regardless of industry or seniority level.
 
 Extract from this resume text:
 <<<RESUME_TEXT>>>`;
@@ -60,31 +58,13 @@ export default async function resumeExtractRoutes(app) {
 
       // Check if OpenAI API key is available
       if (!process.env.OPENAI_API_KEY) {
-        console.warn(`⚠️ [${requestId}] OpenAI API key not configured, using fallback extraction`);
-        
-        // Use fallback extraction when no API key
-        const fallbackData = {
-          extraction: {
-            basic: {
-              name: extractName(canonicalText),
-              email: extractEmail(canonicalText),
-              phone: extractPhone(canonicalText),
-              location: extractLocation(canonicalText)
-            },
-            professional: {
-              title: extractTitle(canonicalText),
-              summary: extractSummary(canonicalText),
-              yearsExperience: extractYearsExperience(canonicalText),
-              seniority: extractSeniority(extractYearsExperience(canonicalText))
-            }
-          },
+        console.error(`❌ [${requestId}] OpenAI API key not configured`);
+        return reply.code(500).send({ 
+          error: 'CONFIG_ERROR', 
+          message: 'OpenAI API key not configured',
           processingTime: `${Date.now() - startTime}ms`,
-          fallbackUsed: true,
-          reason: 'No OpenAI API key configured'
-        };
-
-        console.log(`✅ [${requestId}] Fallback extraction completed in ${Date.now() - startTime}ms`);
-        return reply.send(fallbackData);
+          requestId: requestId
+        });
       }
 
       try {
