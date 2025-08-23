@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import bulkZipRoutes from './routes/bulk-zip.js';
 import chatResponsesRoutes from './routes/chat-responses.js';
+import resumeExtractRoutes from './routes/resume-extract.js';
 
 const PORT = process.env.PORT || 8787;
 const MAX_BYTES = 250 * 1024 * 1024; // 250MB for bulk-zip support
@@ -24,8 +25,9 @@ app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
 // Register only essential routes for demo
 await app.register(bulkZipRoutes);
 await app.register(chatResponsesRoutes);
+await app.register(resumeExtractRoutes);
 
-console.log('✅ Demo routes registered: bulk-zip, chat-responses');
+console.log('✅ Demo routes registered: bulk-zip, chat-responses, resume-extract');
 
 function err(code, message, details = {}) {
   return { error: { code, message, details } };
