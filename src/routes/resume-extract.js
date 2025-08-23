@@ -13,6 +13,7 @@ const EXTRACTION_PROMPT = `Extract essential information from this resume text. 
       "name": "string|null",
       "location": "string|null",
       "title": "string|null",
+      "blurb": "string|null",
       "summary": "string|null",
       "yearsExperience": "number|null"
     }
@@ -23,6 +24,7 @@ Rules:
 - name: Full name as written in resume
 - location: City, State/Country if present
 - title: Current or most recent job title
+- blurb: Quick one-sentence overview (5-10 words max) describing who they are professionally
 - summary: Write a neutral, objective summary of around 100 words describing who this candidate is, their key strengths, and general background. Be objective and professional regardless of industry or seniority level.
 - yearsExperience: Total years of experience (numeric only)
 
