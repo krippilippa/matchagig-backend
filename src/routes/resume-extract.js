@@ -20,14 +20,15 @@ const EXTRACTION_PROMPT = `Extract essential information from this resume text. 
 }
 
 Rules:
-- name: Full name as written in resume
-- location: City, State/Country if present
-- title: Current or most recent job title
-- blurb: Two-sentence professional overview (15-20 words total) describing who they are and their key strengths
-- summary: Write a neutral, objective summary of around 80 words describing who this candidate is, their key strengths, and general background. Be objective and professional regardless of industry or seniority level.
+- name: Full name as written in resume.
+- location: City, State/Country if present. Return null if not found.
+- title: Current or most recent job title (from latest work experience).
+- blurb: One concise sentence (≤20 words) giving a factual professional overview (e.g. “Sales manager with 10 years in SaaS and B2B.”). Avoid subjective adjectives.
+- summary: ~80 words, neutral and professional. Always start with the most recent role (title + employer + years if available), then cover main experience, industries, and skills. Avoid subjective claims (e.g. excellent, proven). If info is missing, state “not specified.”
 
 Extract from this resume text:
 <<<RESUME_TEXT>>>`;
+
 
 export default async function resumeExtractRoutes(app) {
   app.post('/v1/resume/extract', async (req, reply) => {
@@ -57,6 +58,12 @@ export default async function resumeExtractRoutes(app) {
       console.log(`⏱️ [${requestId}] Starting extraction process`);
 
       // Check if OpenAI API key is available
+      console.log(`🔑 [${requestId}] API Key check:`, {
+        hasKey: !!process.env.OPENAI_API_KEY,
+        keyLength: process.env.OPENAI_API_KEY?.length || 0,
+        keyPreview: process.env.OPENAI_API_KEY ? `${process.env.OPENAI_API_KEY.substring(0, 20)}...` : 'None'
+      });
+      
       if (!process.env.OPENAI_API_KEY) {
         console.error(`❌ [${requestId}] OpenAI API key not configured`);
         return reply.code(500).send({ 
